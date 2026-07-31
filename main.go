@@ -43,6 +43,7 @@ type promptPurpose int
 const (
 	purposeNone promptPurpose = iota
 	purposeURL
+	purposeField
 )
 
 type app struct {
@@ -51,6 +52,7 @@ type app struct {
 	noImages bool
 
 	cols, rows int
+	dom        *dom.Doc // parsed DOM of the current page (re-layout cache)
 	doc        *layout.Document
 	offset     int
 	url        string
@@ -59,7 +61,11 @@ type app struct {
 	history []string
 	histPos int // index of current page in history
 
-	purpose promptPurpose
+	purpose  promptPurpose
+	fieldIdx int               // Fields index the active field prompt is for
+	values   layout.FormValues // user-entered field values; cleared on load
+
+	pendingFrag string // fragment to jump to after the next successful load
 }
 
 func (a *app) fetcher() layout.ImageFetcher {
@@ -88,7 +94,9 @@ func (a *app) load(rawURL string) bool {
 		a.lastErr = err.Error()
 		return false
 	}
-	a.doc = layout.Render(d, a.cols, a.fetcher(), nil) // nil until v0.3 Task 3
+	a.dom = d
+	a.values = nil // new page: previous pages' field values are stale
+	a.doc = layout.Render(d, a.cols, a.fetcher(), a.values)
 	a.url = finalURL
 	if truncated {
 		a.lastErr = "page truncated at 5MB"
@@ -99,11 +107,21 @@ func (a *app) load(rawURL string) bool {
 // navigate fetches and lays out rawURL, scrolls to the top, and draws.
 // push records the page in history (truncating any forward entries).
 func (a *app) navigate(rawURL string, push bool) {
+	frag := a.pendingFrag
+	a.pendingFrag = ""
 	if !a.load(rawURL) {
 		a.draw()
 		return
 	}
 	a.offset = 0
+	if frag != "" {
+		if ln, ok := a.doc.Anchors[frag]; ok {
+			a.offset = ln
+			a.clampOffset()
+		} else {
+			a.lastErr = "anchor not found: #" + frag
+		}
+	}
 	if push {
 		if len(a.history) == 0 {
 			a.history = []string{a.url}
@@ -115,21 +133,18 @@ func (a *app) navigate(rawURL string, push bool) {
 	a.draw()
 }
 
-// relayout re-flows the current document at the current width, keeping the
-// scroll position proportionally. Reflow requires the parsed DOM; simplest
-// correct path is a re-fetch of the current URL — cheap pages, local net
-// cost accepted for v2.
+// relayout re-flows the cached DOM at the current width — no network —
+// keeping the scroll position proportionally.
 func (a *app) relayout() {
-	if a.doc == nil {
+	if a.dom == nil {
 		return
 	}
 	ratio := 0.0
-	if len(a.doc.Lines) > 0 {
+	if a.doc != nil && len(a.doc.Lines) > 0 {
 		ratio = float64(a.offset) / float64(len(a.doc.Lines))
 	}
-	if a.load(a.url) {
-		a.offset = int(ratio * float64(len(a.doc.Lines)))
-	}
+	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values)
+	a.offset = int(ratio * float64(len(a.doc.Lines)))
 	a.clampOffset()
 	a.draw()
 }
@@ -180,7 +195,23 @@ func (a *app) click(x, y int) {
 	if a.doc == nil {
 		return
 	}
-	href, ok := a.doc.LinkAt(a.offset+y, x)
+	line := a.offset + y
+	if i, ok := a.doc.FieldAt(line, x); ok {
+		fl := a.doc.Fields[i]
+		label := fl.Name
+		if label == "" {
+			label = "text"
+		}
+		a.purpose = purposeField
+		a.fieldIdx = i
+		a.u.Prompt(label+": ", fl.Value)
+		return
+	}
+	if i, ok := a.doc.SubmitAt(line, x); ok {
+		a.submit(i)
+		return
+	}
+	href, ok := a.doc.LinkAt(line, x)
 	if !ok {
 		return
 	}
@@ -200,8 +231,33 @@ func (a *app) click(x, y int) {
 		}
 		a.draw()
 	default:
+		// Cross-page anchor: navigate to the base URL, then jump to the
+		// fragment's line once the page has loaded (see navigate).
+		if i := strings.Index(href, "#"); i >= 0 {
+			a.pendingFrag = href[i+1:]
+			href = href[:i]
+		}
 		a.navigate(href, true)
 	}
+}
+
+// submit builds the GET URL for form formIdx from the current field values
+// and navigates to it. Errors (POST, bad action) land in the status bar.
+func (a *app) submit(formIdx int) {
+	form := a.doc.Forms[formIdx]
+	var fields []layout.Field
+	for _, fl := range a.doc.Fields {
+		if fl.FormIdx == formIdx {
+			fields = append(fields, fl)
+		}
+	}
+	target, err := submitURL(form, fields, a.values)
+	if err != nil {
+		a.lastErr = err.Error()
+		a.draw()
+		return
+	}
+	a.navigate(target, true)
 }
 
 func (a *app) back() {
@@ -271,6 +327,23 @@ func (a *app) run() {
 					continue
 				}
 				a.navigate(e.Text, true)
+			case purposeField:
+				if a.doc == nil || a.fieldIdx >= len(a.doc.Fields) {
+					a.draw()
+					continue
+				}
+				fl := a.doc.Fields[a.fieldIdx]
+				if fl.Name != "" {
+					if a.values == nil {
+						a.values = layout.FormValues{}
+					}
+					form := a.doc.Forms[fl.FormIdx]
+					a.values[layout.ValuesKey(form.Action, fl.Name)] = e.Text
+					a.relayout() // show the typed value in its box
+				}
+				a.submit(fl.FormIdx)
+			default:
+				a.draw()
 			}
 		case ui.InputCancelEvent:
 			a.purpose = purposeNone
