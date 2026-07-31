@@ -220,7 +220,7 @@ func rowCells(tr *dom.Node) []*dom.Node {
 // double-adds), which emitRow merges back into the page document.
 func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 	sub := &Document{Anchors: map[string]int{}}
-	mw := &walker{doc: sub, src: w.src, width: width, images: w.images, values: w.values, linkOpen: -1, formIdx: -1}
+	mw := &walker{doc: sub, src: w.src, width: width, images: w.images, values: w.values, styles: w.styles, linkOpen: -1, formIdx: -1}
 	if w.formIdx >= 0 {
 		pf := w.doc.Forms[w.formIdx]
 		sub.Forms = append(sub.Forms, Form{

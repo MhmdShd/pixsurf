@@ -8,6 +8,7 @@ import (
 
 	"github.com/MhmdShd/pixsurf/cell"
 	"github.com/MhmdShd/pixsurf/dom"
+	"github.com/MhmdShd/pixsurf/style"
 )
 
 func doc(t *testing.T, src string, width int) *Document {
@@ -21,7 +22,7 @@ func docV(t *testing.T, src string, width int, values FormValues) *Document {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Render(d, width, nil, values)
+	return Render(d, width, nil, values, nil)
 }
 
 func lineText(d *Document, i int) string {
@@ -170,7 +171,7 @@ func TestImagePixels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := Render(d, 20, fetch, nil)
+	out := Render(d, 20, fetch, nil, nil)
 	var pixelLines int
 	for _, ln := range out.Lines {
 		if len(ln) > 0 && ln[0].Rune == '▀' && ln[0].HasFg && ln[0].HasBg {
@@ -509,7 +510,7 @@ func renderWith(t *testing.T, src string, width int, fetch ImageFetcher) *Docume
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Render(d, width, fetch, nil)
+	return Render(d, width, fetch, nil, nil)
 }
 
 func pixelDims(d *Document) (cols, rows int) {
@@ -930,5 +931,127 @@ func TestBlankSeparatorUsesStyleBackground(t *testing.T) {
 		if !c.HasBg || c.Bg != white {
 			t.Errorf("blank cell %d: HasBg=%v Bg=%v, want white %v", j, c.HasBg, c.Bg, white)
 		}
+	}
+}
+
+// stubResolver overlays test behaviour on the default tag styling.
+type stubResolver struct {
+	hidden  func(n *dom.Node) bool
+	resolve func(n *dom.Node, parent style.Style) style.Style
+}
+
+func (s stubResolver) Hidden(n *dom.Node) bool {
+	return s.hidden != nil && s.hidden(n)
+}
+
+func (s stubResolver) Resolve(n *dom.Node, parent style.Style) style.Style {
+	if s.resolve != nil {
+		return s.resolve(n, parent)
+	}
+	return style.ApplyInline(style.ForTag(strings.ToLower(n.Data), parent), n)
+}
+
+func docR(t *testing.T, src string, width int, r StyleResolver) *Document {
+	t.Helper()
+	d, err := dom.Parse(src, "https://example.org/page")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Render(d, width, nil, nil, r)
+}
+
+func TestResolverNilUnchanged(t *testing.T) {
+	src := `<h1 id="top">Title</h1><p>go to <a href="/wiki/Go">the page</a></p><ul><li>one</li></ul>`
+	d := docR(t, src, 40, nil)
+	want := "Title\n\ngo to the page\n\n• one"
+	if got := allText(d); got != want {
+		t.Errorf("nil resolver text = %q, want %q", got, want)
+	}
+	if u, ok := d.LinkAt(2, 6); !ok || u != "https://example.org/wiki/Go" {
+		t.Errorf("LinkAt(2,6) = %q,%v", u, ok)
+	}
+	if ln, ok := d.Anchors["top"]; !ok || ln != 0 {
+		t.Errorf("anchor top = %d,%v", ln, ok)
+	}
+}
+
+func TestResolverHidesSubtree(t *testing.T) {
+	src := `<p>keep</p><div class="x"><p>secret text</p></div><p>tail</p>`
+	r := stubResolver{hidden: func(n *dom.Node) bool {
+		return n.Type == dom.ElementNode && n.Data == "div" && dom.Attr(n, "class") == "x"
+	}}
+	d := docR(t, src, 40, r)
+	txt := allText(d)
+	if strings.Contains(txt, "secret") {
+		t.Errorf("hidden subtree rendered:\n%s", txt)
+	}
+	for _, want := range []string{"keep", "tail"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("missing %q in:\n%s", want, txt)
+		}
+	}
+}
+
+func TestResolverStyles(t *testing.T) {
+	src := `<p><span class="hot">word</span></p>`
+	r := stubResolver{resolve: func(n *dom.Node, parent style.Style) style.Style {
+		s := style.ApplyInline(style.ForTag(strings.ToLower(n.Data), parent), n)
+		if dom.Attr(n, "class") == "hot" {
+			s.Bold = true
+		}
+		return s
+	}}
+	d := docR(t, src, 40, r)
+	if got := lineText(d, 0); got != "word" {
+		t.Fatalf("line0 = %q", got)
+	}
+	for i, c := range d.Lines[0][:4] {
+		if !c.Bold {
+			t.Errorf("cell %d not bold", i)
+		}
+	}
+}
+
+func TestTextTransformUppercase(t *testing.T) {
+	src := `<p class="up">hello world</p>`
+	r := stubResolver{resolve: func(n *dom.Node, parent style.Style) style.Style {
+		s := style.ApplyInline(style.ForTag(strings.ToLower(n.Data), parent), n)
+		if dom.Attr(n, "class") == "up" {
+			s.Transform = style.TransformUpper
+		}
+		return s
+	}}
+	d := docR(t, src, 40, r)
+	if got := lineText(d, 0); got != "HELLO WORLD" {
+		t.Errorf("line0 = %q, want %q", got, "HELLO WORLD")
+	}
+}
+
+func TestAlignCenterShiftsLineAndRanges(t *testing.T) {
+	src := `<p class="c">go <a href="/x">link</a></p>`
+	r := stubResolver{resolve: func(n *dom.Node, parent style.Style) style.Style {
+		s := style.ApplyInline(style.ForTag(strings.ToLower(n.Data), parent), n)
+		if dom.Attr(n, "class") == "c" {
+			s.Align = style.AlignCenter
+		}
+		return s
+	}}
+	d := docR(t, src, 21, r)
+	// "go link" is 7 cols; shift = (21-7)/2 = 7
+	if got := lineText(d, 0); got != "       go link" {
+		t.Errorf("line0 = %q, want %q", got, "       go link")
+	}
+	// old link columns 3..6 no longer hit
+	if _, ok := d.LinkAt(0, 3); ok {
+		t.Error("LinkAt(0,3) still matches after shift")
+	}
+	// new columns 10..13 hit
+	for _, col := range []int{10, 13} {
+		if u, ok := d.LinkAt(0, col); !ok || u != "https://example.org/x" {
+			t.Errorf("LinkAt(0,%d) = %q,%v", col, u, ok)
+		}
+	}
+	if _, ok := d.LinkAt(0, 14); ok {
+		t.Error("LinkAt(0,14) matches past link end")
 	}
 }

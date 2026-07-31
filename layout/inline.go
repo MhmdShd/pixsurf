@@ -14,7 +14,8 @@ import (
 // of whitespace collapses to a single pending space; inside <pre>, text is
 // emitted verbatim line-by-line and clipped at width.
 func (w *walker) emitText(text string, st style.Style) {
-	if w.pre {
+	text = transformText(text, st.Transform)
+	if w.pre || st.Pre {
 		w.emitPre(text, st)
 		return
 	}
@@ -37,6 +38,28 @@ func (w *walker) emitText(text string, st style.Style) {
 	if endsWithSpace(text) {
 		w.pendingSpace = true
 	}
+}
+
+// transformText applies a CSS text-transform to a text run before it is
+// split into words, so wrapping and width measurement see the final runes.
+func transformText(text string, t style.Transform) string {
+	switch t {
+	case style.TransformUpper:
+		return strings.ToUpper(text)
+	case style.TransformLower:
+		return strings.ToLower(text)
+	case style.TransformCapitalize:
+		prevLetter := false
+		return strings.Map(func(r rune) rune {
+			isLetter := unicode.IsLetter(r) || unicode.IsDigit(r)
+			if isLetter && !prevLetter {
+				r = unicode.ToUpper(r)
+			}
+			prevLetter = isLetter
+			return r
+		}, text)
+	}
+	return text
 }
 
 // emitWord appends one word, breaking the line when it doesn't fit and
@@ -105,6 +128,7 @@ func (w *walker) putRune(r rune, st style.Style) {
 		w.startLine()
 	}
 	w.hasStyleBg, w.styleBg = st.HasBg, st.Bg
+	w.lineAlign = st.Align
 	if w.linkURL != "" && w.linkOpen < 0 {
 		w.linkOpen = w.col
 	}
@@ -164,20 +188,75 @@ func (w *walker) indentCols() int {
 	return ind
 }
 
-// flushLine closes any open link range and appends the current line.
+// flushLine aligns the line, closes any open link range and appends it.
 func (w *walker) flushLine() {
 	if !w.started {
 		return
 	}
+	w.alignLine()
 	w.closeLinkRange()
 	w.fillBackground()
 	w.doc.Lines = append(w.doc.Lines, w.line)
 	w.line = nil
 	w.linePixels = false
+	w.lineAlign = style.AlignNone
 	w.col = 0
 	w.lineBase = 0
 	w.started = false
 	w.pendingSpace = false
+}
+
+// alignLine shifts a centred or right-aligned line within the content
+// width by padding on the left after the indent. Every range already
+// recorded on this line — links, field boxes, submit regions, and the
+// still-open link start — moves by the same shift so hit-testing stays
+// correct. Inserted cells are plain spaces (index == column holds);
+// fillBackground later paints them when the line carries a background.
+// Skipped while measuring: the pad would inflate natural cell widths.
+func (w *walker) alignLine() {
+	if w.measuring {
+		return
+	}
+	var shift int
+	switch w.lineAlign {
+	case style.AlignCenter:
+		shift = (w.width - w.col) / 2
+	case style.AlignRight:
+		shift = w.width - w.col
+	default:
+		return
+	}
+	if shift <= 0 {
+		return
+	}
+	pad := make([]cell.Cell, shift)
+	for i := range pad {
+		pad[i] = cell.Cell{Rune: ' '}
+	}
+	w.line = append(w.line[:w.lineBase], append(pad, w.line[w.lineBase:]...)...)
+	w.col += shift
+	if w.linkOpen >= 0 {
+		w.linkOpen += shift
+	}
+	ln := len(w.doc.Lines)
+	for i := range w.doc.Links {
+		if w.doc.Links[i].Line == ln {
+			w.doc.Links[i].Start += shift
+			w.doc.Links[i].End += shift
+		}
+	}
+	for i := range w.doc.Fields {
+		if w.doc.Fields[i].Line == ln {
+			w.doc.Fields[i].Start += shift
+			w.doc.Fields[i].End += shift
+		}
+	}
+	for i := range w.doc.Forms {
+		if w.doc.Forms[i].SubmitLine == ln {
+			w.doc.Forms[i].SubmitStart += shift
+			w.doc.Forms[i].SubmitEnd += shift
+		}
+	}
 }
 
 // fillBackground makes a line that carries a background color render as a

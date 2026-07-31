@@ -35,6 +35,15 @@ type Document struct {
 // ImageFetcher loads an image by absolute URL; nil disables images.
 type ImageFetcher func(url string) (image.Image, error)
 
+// StyleResolver supplies computed styles. Render accepts nil, in which
+// case it falls back to style.ForTag + style.ApplyInline as today.
+type StyleResolver interface {
+	// Hidden reports display:none / visibility:hidden for n's subtree.
+	Hidden(n *dom.Node) bool
+	// Resolve returns n's computed style given its parent's.
+	Resolve(n *dom.Node, parent style.Style) style.Style
+}
+
 // LinkAt returns the URL covering (line, col), if any.
 func (d *Document) LinkAt(line, col int) (string, bool) {
 	for _, l := range d.Links {
@@ -47,7 +56,8 @@ func (d *Document) LinkAt(line, col int) (string, bool) {
 
 // Render lays out doc at the given content width. values holds
 // user-entered form field values (keyed by ValuesKey); nil is fine.
-func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues) *Document {
+// styles supplies computed CSS styles; nil falls back to tag defaults.
+func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues, styles StyleResolver) *Document {
 	if width < 1 {
 		width = 1
 	}
@@ -55,7 +65,7 @@ func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues) *Docu
 	out.Title = findTitle(d.Root)
 	out.PageBg, out.HasPageBg = pageBackground(d)
 	root := contentRoot(d)
-	w := &walker{doc: out, src: d, width: width, images: images, values: values, linkOpen: -1, formIdx: -1}
+	w := &walker{doc: out, src: d, width: width, images: images, values: values, styles: styles, linkOpen: -1, formIdx: -1}
 	w.skipChrome = chromeSkipSafe(root)
 	rootSt := style.Style{}
 	if out.HasPageBg {
@@ -129,6 +139,7 @@ type walker struct {
 	src    *dom.Doc
 	width  int
 	images ImageFetcher
+	styles StyleResolver // nil: style.ForTag + style.ApplyInline
 
 	line     []cell.Cell // current line being built
 	col      int         // display column after last cell
@@ -149,7 +160,8 @@ type walker struct {
 	// incidental colour of a content cell such as an image pixel.
 	styleBg    cell.RGB
 	hasStyleBg bool
-	linePixels bool // current line holds image pixel cells
+	linePixels bool        // current line holds image pixel cells
+	lineAlign  style.Align // alignment of the style last applied on this line
 
 	pre   bool // inside <pre>: verbatim text, no wrap
 	quote int  // blockquote nesting depth (2 cols each)
@@ -190,7 +202,14 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 	if w.skipChrome && isChrome(n) {
 		return
 	}
-	st = style.ApplyInline(style.ForTag(tag, st), n)
+	if w.styles != nil {
+		if w.styles.Hidden(n) {
+			return
+		}
+		st = w.styles.Resolve(n, st)
+	} else {
+		st = style.ApplyInline(style.ForTag(tag, st), n)
+	}
 
 	switch {
 	case tag == "br":

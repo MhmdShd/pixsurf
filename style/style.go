@@ -9,11 +9,38 @@ import (
 	"github.com/MhmdShd/pixsurf/cell"
 )
 
+// Align is a horizontal text alignment (CSS text-align).
+type Align uint8
+
+const (
+	AlignNone Align = iota
+	AlignLeft
+	AlignCenter
+	AlignRight
+)
+
+// Transform is a text case transform (CSS text-transform).
+type Transform uint8
+
+const (
+	TransformNone Transform = iota
+	TransformUpper
+	TransformLower
+	TransformCapitalize
+)
+
 // Style is the resolved display style for a DOM subtree.
 type Style struct {
 	Fg, Bg                                        cell.RGB
 	HasFg, HasBg                                  bool
 	Bold, Italic, Underline, Strike, Reverse, Dim bool
+
+	// CSS-driven effects; never set by ForTag. Align shifts flushed
+	// lines, Transform recases emitted text, Pre selects the verbatim
+	// no-wrap path (CSS white-space: pre / pre-wrap).
+	Align     Align
+	Transform Transform
+	Pre       bool
 }
 
 var linkColor = cell.RGB{R: 95, G: 175, B: 255}

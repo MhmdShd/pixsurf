@@ -143,7 +143,7 @@ func (a *app) load(rawURL string) bool {
 	a.dom = d
 	a.values = nil // new page: previous pages' field values are stale
 	a.resetImages()
-	a.doc = layout.Render(d, a.cols, a.fetcher(), a.values)
+	a.doc = layout.Render(d, a.cols, a.fetcher(), a.values, nil)
 	a.spawnFetches()
 	a.url = resp.URL
 	if resp.Truncated {
@@ -192,7 +192,7 @@ func (a *app) relayout() {
 	if a.doc != nil && len(a.doc.Lines) > 0 {
 		ratio = float64(a.offset) / float64(len(a.doc.Lines))
 	}
-	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values)
+	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values, nil)
 	a.spawnFetches()
 	a.offset = int(ratio * float64(len(a.doc.Lines)))
 	a.clampOffset()
@@ -207,7 +207,7 @@ func (a *app) imageRelayout() {
 	if a.dom == nil {
 		return
 	}
-	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values)
+	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values, nil)
 	a.spawnFetches()
 	a.clampOffset()
 	a.draw()

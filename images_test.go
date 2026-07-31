@@ -32,7 +32,7 @@ func TestImageCacheTwoPassRender(t *testing.T) {
 	}
 	c := newImageCache()
 
-	doc := layout.Render(d, 40, c.fetcher(), nil)
+	doc := layout.Render(d, 40, c.fetcher(), nil, nil)
 	if got := pixelLines(doc); got != 0 {
 		t.Errorf("first pass: %d pixel lines, want 0 (placeholder)", got)
 	}
@@ -45,7 +45,7 @@ func TestImageCacheTwoPassRender(t *testing.T) {
 		t.Fatal("store rejected under cap")
 	}
 
-	doc = layout.Render(d, 40, c.fetcher(), nil)
+	doc = layout.Render(d, 40, c.fetcher(), nil, nil)
 	if got := pixelLines(doc); got == 0 {
 		t.Error("second pass: 0 pixel lines, want >0 (cache hit)")
 	}
