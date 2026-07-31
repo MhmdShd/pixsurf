@@ -15,7 +15,7 @@
       "description": "```json:metadata\n{\"files\": [\"layout/table.go\", \"layout/image.go\", \"layout/layout_test.go\"], \"verifyCommand\": \"go test ./layout/ -v\"}\n```" },
     { "id": 13, "subject": "v2 Task 7: main rewrite, delete browser/, README", "status": "completed", "blockedBy": [8, 12],
       "description": "```json:metadata\n{\"files\": [\"main.go\", \"README.md\"], \"verifyCommand\": \"go build -o pixsurf . && go vet ./... && go test ./... && ! grep chromedp go.mod\"}\n```" },
-    { "id": 14, "subject": "v2 Task 8: smoke test + push", "status": "pending", "blockedBy": [13],
+    { "id": 14, "subject": "v2 Task 8: smoke test + push", "status": "completed", "blockedBy": [13],
       "description": "```json:metadata\n{\"files\": [], \"verifyCommand\": \"go run ./smoke\"}\n```" }
   ],
   "lastUpdated": "2026-07-31"
