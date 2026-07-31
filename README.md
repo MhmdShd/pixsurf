@@ -36,6 +36,10 @@ pixsurf wikipedia.org
 pixsurf --no-images news.ycombinator.com   # text only, minimal bandwidth
 ```
 
+Site search works: click a search box, type, Enter (GET forms).
+
+Images load asynchronously — pages appear instantly and images fill in.
+
 ## Controls
 
 | Key | Action |
