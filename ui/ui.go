@@ -6,7 +6,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
-	"github.com/MhmdShd/pixsurf/render"
+	"github.com/MhmdShd/pixsurf/cell"
 )
 
 // ActionKind identifies a navigation action.
@@ -186,14 +186,24 @@ func (u *UI) handleInputKey(e *tcell.EventKey) {
 }
 
 // Draw renders the cell grid and the status bar, then flushes.
-func (u *UI) Draw(cells [][]render.Cell, status string) {
+func (u *UI) Draw(view [][]cell.Cell, status string) {
 	u.screen.Clear()
-	for y, row := range cells {
+	for y, row := range view {
 		for x, c := range row {
-			st := tcell.StyleDefault.
-				Foreground(tcell.NewRGBColor(int32(c.Top.R), int32(c.Top.G), int32(c.Top.B))).
-				Background(tcell.NewRGBColor(int32(c.Bottom.R), int32(c.Bottom.G), int32(c.Bottom.B)))
-			u.screen.SetContent(x, y, '▀', nil, st)
+			st := tcell.StyleDefault
+			if c.HasFg {
+				st = st.Foreground(tcell.NewRGBColor(int32(c.Fg.R), int32(c.Fg.G), int32(c.Fg.B)))
+			}
+			if c.HasBg {
+				st = st.Background(tcell.NewRGBColor(int32(c.Bg.R), int32(c.Bg.G), int32(c.Bg.B)))
+			}
+			st = st.Bold(c.Bold).Italic(c.Italic).Underline(c.Underline).
+				StrikeThrough(c.Strike).Reverse(c.Reverse).Dim(c.Dim)
+			r := c.Rune
+			if r == 0 {
+				r = ' '
+			}
+			u.screen.SetContent(x, y, r, nil, st)
 		}
 	}
 	u.drawStatus(status)

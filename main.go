@@ -8,9 +8,29 @@ import (
 	"time"
 
 	"github.com/MhmdShd/pixsurf/browser"
+	"github.com/MhmdShd/pixsurf/cell"
 	"github.com/MhmdShd/pixsurf/render"
 	"github.com/MhmdShd/pixsurf/ui"
 )
+
+// toCellGrid converts a render.Cell grid to a cell.Cell grid.
+// TEMP shim, removed in v2 Task 7.
+func toCellGrid(cells [][]render.Cell) [][]cell.Cell {
+	out := make([][]cell.Cell, len(cells))
+	for y, row := range cells {
+		out[y] = make([]cell.Cell, len(row))
+		for x, c := range row {
+			out[y][x] = cell.Cell{
+				Rune:  '▀',
+				Fg:    cell.RGB{R: c.Top.R, G: c.Top.G, B: c.Top.B},
+				Bg:    cell.RGB{R: c.Bottom.R, G: c.Bottom.G, B: c.Bottom.B},
+				HasFg: true,
+				HasBg: true,
+			}
+		}
+	}
+	return out
+}
 
 const pageWidth = 1280.0
 const scrollStep = 60.0 // page pixels per arrow key
@@ -96,7 +116,7 @@ func (a *app) refresh() {
 		if cells == nil {
 			cells = render.ToCells(image.NewRGBA(image.Rect(0, 0, 1, 1)), a.cols, a.rows)
 		}
-		a.u.Draw(cells, "error: "+a.lastErr)
+		a.u.Draw(toCellGrid(cells), "error: "+a.lastErr)
 		return
 	}
 	cells := render.ToCells(img, a.cols, a.rows)
@@ -105,7 +125,7 @@ func (a *app) refresh() {
 	if a.lastErr != "" {
 		status = "error: " + a.lastErr
 	}
-	a.u.Draw(cells, status)
+	a.u.Draw(toCellGrid(cells), status)
 }
 
 // normalStatus builds the default (non-error) status bar text.
@@ -183,7 +203,7 @@ func (a *app) handle(ev ui.Event) (quit bool) {
 			// Grid size is unchanged (e.g. a URL-bar keystroke firing a
 			// redraw request) — skip the SetViewport+Screenshot round-trip
 			// and just repaint the last frame with the current status.
-			a.u.Draw(a.lastCells, a.normalStatus())
+			a.u.Draw(toCellGrid(a.lastCells), a.normalStatus())
 			return false
 		}
 		a.resize()
