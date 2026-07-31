@@ -42,9 +42,14 @@ func New() (*Browser, error) {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
 
+	// chromedp ties the browser tab's lifetime to whichever context is
+	// passed into the *first* Run call, not just that call's scope — so a
+	// timeout context here must not be canceled once launch succeeds, or
+	// it kills the session outright. We only cancel it (via cancelLaunch)
+	// if launch itself fails or times out.
 	launchCtx, cancelLaunch := context.WithTimeout(ctx, launchTimeout)
-	defer cancelLaunch()
 	if err := chromedp.Run(launchCtx); err != nil {
+		cancelLaunch()
 		cancelCtx()
 		cancelAlloc()
 		return nil, fmt.Errorf("could not start Chrome — is Chrome or Chromium installed? (%w)", err)
@@ -52,7 +57,7 @@ func New() (*Browser, error) {
 	// Teardown order matters: cancel the child context (Chrome tab/session)
 	// before the parent allocator context (Chrome process), so Close()
 	// shuts Chrome down gracefully instead of killing it outright.
-	return &Browser{ctx: ctx, cancels: []context.CancelFunc{cancelCtx, cancelAlloc}}, nil
+	return &Browser{ctx: ctx, cancels: []context.CancelFunc{cancelCtx, cancelAlloc, cancelLaunch}}, nil
 }
 
 // NormalizeURL prefixes https:// when no scheme is present.
