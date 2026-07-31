@@ -2,6 +2,8 @@
 
 Surf the web in your terminal — no browser install, no JavaScript bloat.
 
+![pixsurf demo](docs/demo.gif)
+
 pixsurf is a terminal web browser with its own pure-Go rendering engine:
 it fetches pages, lays them out with colors and styles, draws images as
 truecolor half-block pixels, and makes links clickable — all in a single
@@ -43,6 +45,12 @@ Images load asynchronously — pages appear instantly and images fill in.
 pixsurf skips site chrome (nav bars, sidebars, footers) and starts at the
 article, so you are reading in the first screen instead of scrolling past
 menus. Tables size their columns to their content.
+
+Markdown and plain-text URLs render as documents, not as raw source:
+
+```sh
+pixsurf raw.githubusercontent.com/golang/go/master/README.md
+```
 
 ## Controls
 
