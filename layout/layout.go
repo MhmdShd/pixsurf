@@ -104,7 +104,7 @@ var blockTags = map[string]bool{
 	"p": true, "div": true, "section": true, "article": true,
 	"header": true, "footer": true, "main": true, "nav": true, "aside": true,
 	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
-	"table": true, "tr": true, "figure": true, "figcaption": true,
+	"tr": true, "figure": true, "figcaption": true,
 	"form": true, "fieldset": true, "address": true, "dl": true,
 	"dt": true, "dd": true,
 }
@@ -202,6 +202,8 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.walkChildren(n, st)
 		w.closeLinkRange()
 		w.linkURL = ""
+	case tag == "table":
+		w.renderTable(n, st)
 	case tag == "img":
 		w.recordAnchor(n)
 		w.emitImage(n, st)
@@ -274,16 +276,4 @@ func (w *walker) blockStart() {
 func (w *walker) blockEnd() {
 	w.flushLine()
 	w.pendingBlank = true
-}
-
-// emitImage renders an <img>. Without a fetcher (or in this task, always)
-// it emits an [alt] placeholder; Task 6 slots pixel rendering in here.
-func (w *walker) emitImage(n *dom.Node, st style.Style) {
-	alt := strings.TrimSpace(dom.Attr(n, "alt"))
-	text := "[image]"
-	if alt != "" {
-		text = "[" + alt + "]"
-	}
-	st.Dim = true
-	w.emitText(text, st)
 }

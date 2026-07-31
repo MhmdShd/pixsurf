@@ -1,6 +1,8 @@
 package layout
 
 import (
+	"image"
+	"image/color"
 	"strings"
 	"testing"
 
@@ -126,5 +128,53 @@ func TestHiddenElements(t *testing.T) {
 	}
 	if !strings.Contains(txt, "visible") {
 		t.Errorf("visible content missing:\n%s", txt)
+	}
+}
+
+func TestTable(t *testing.T) {
+	d := doc(t, "<table><tr><td>aa</td><td>bb</td></tr><tr><td>cc</td><td>dd</td></tr></table>", 20)
+	txt := allText(d)
+	l0 := lineText(d, 0)
+	if !strings.Contains(l0, "aa") || !strings.Contains(l0, "bb") {
+		t.Errorf("row0 = %q, want aa and bb on same line\nfull:\n%s", l0, txt)
+	}
+	if !strings.Contains(allText(d), "cc") {
+		t.Errorf("row1 missing cc:\n%s", txt)
+	}
+}
+
+func TestImagePlaceholder(t *testing.T) {
+	d := doc(t, `<p><img src="x.png" alt="my cat"></p>`, 40) // nil fetcher
+	if !strings.Contains(allText(d), "[my cat]") {
+		t.Errorf("alt placeholder missing:\n%s", allText(d))
+	}
+}
+
+func TestImagePixels(t *testing.T) {
+	fetch := func(url string) (image.Image, error) {
+		img := image.NewRGBA(image.Rect(0, 0, 40, 20))
+		for y := 0; y < 20; y++ {
+			for x := 0; x < 40; x++ {
+				img.Set(x, y, color.RGBA{R: 200, A: 255})
+			}
+		}
+		return img, nil
+	}
+	d, err := dom.Parse(`<img src="/x.png">`, "https://example.org/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := Render(d, 20, fetch)
+	var pixelLines int
+	for _, ln := range out.Lines {
+		if len(ln) > 0 && ln[0].Rune == '▀' && ln[0].HasFg && ln[0].HasBg {
+			pixelLines++
+		}
+	}
+	if pixelLines == 0 {
+		t.Error("no pixel lines rendered for image")
+	}
+	if pixelLines > 15 {
+		t.Errorf("pixelLines = %d, exceeds 15-row cap", pixelLines)
 	}
 }
