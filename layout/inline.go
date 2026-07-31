@@ -127,7 +127,7 @@ func (w *walker) putRune(r rune, st style.Style) {
 	if !w.started {
 		w.startLine()
 	}
-	w.hasStyleBg, w.styleBg = st.HasBg, st.Bg
+	w.hasStyleBg, w.styleBg = st.HasBackdrop, st.Backdrop
 	w.lineAlign = st.Align
 	if w.linkURL != "" && w.linkOpen < 0 {
 		w.linkOpen = w.col
@@ -141,18 +141,20 @@ func (w *walker) putRune(r rune, st style.Style) {
 	w.col += rw
 }
 
-// appendBlank materializes one blank separator line. When a style-derived
-// background is in effect — a painted block or the page background — the
-// blank is painted full content width with that color so a background
-// sheet has no dark gaps; otherwise it stays a zero-length line exactly
-// as before. The fill deliberately never comes from a content cell: an
-// image's pixel colours must not smear into the separator. Skipped
-// styling while measuring: painting would inflate natural cell widths.
+// appendBlank materializes one blank separator line. When the blank's
+// containing sheet carries a backdrop (recorded by requestBlank) — a
+// painted block or the page background — the blank is painted full
+// content width with that colour so a background sheet has no dark
+// gaps; otherwise it stays a zero-length line exactly as before. The
+// fill deliberately never comes from a content cell: neither an image's
+// pixel colours nor a painted button at the block boundary must smear
+// into the separator. Skipped styling while measuring: painting would
+// inflate natural cell widths.
 func (w *walker) appendBlank() {
-	if !w.measuring && w.hasStyleBg {
+	if !w.measuring && w.blankHasBg {
 		ln := make([]cell.Cell, w.width)
 		for i := range ln {
-			ln[i] = cell.Cell{Rune: ' ', HasBg: true, Bg: w.styleBg}
+			ln[i] = cell.Cell{Rune: ' ', HasBg: true, Bg: w.blankBg}
 		}
 		w.doc.Lines = append(w.doc.Lines, ln)
 		return
@@ -333,13 +335,17 @@ func (w *walker) hasContent() bool {
 	return w.started && w.col > w.lineBase
 }
 
+// styledCell builds one display cell. The cell's painted background is
+// the style's backdrop — the element's own background when declared,
+// else the sheet showing through from an ancestor — never the raw
+// cascade value, so transparent elements sit on the right colour.
 func styledCell(r rune, st style.Style) cell.Cell {
 	return cell.Cell{
 		Rune:      r,
 		Fg:        st.Fg,
-		Bg:        st.Bg,
+		Bg:        st.Backdrop,
 		HasFg:     st.HasFg,
-		HasBg:     st.HasBg,
+		HasBg:     st.HasBackdrop,
 		Bold:      st.Bold,
 		Italic:    st.Italic,
 		Underline: st.Underline,

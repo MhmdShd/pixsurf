@@ -35,12 +35,34 @@ type Style struct {
 	HasFg, HasBg                                  bool
 	Bold, Italic, Underline, Strike, Reverse, Dim bool
 
+	// Backdrop is the colour actually painted behind this element's
+	// glyphs: its own declared background when it has one, else the
+	// nearest ancestor's Backdrop. Unlike Bg/HasBg — the cascade value
+	// of the non-inherited background-color property — the backdrop
+	// models paint: an element with no background is transparent and
+	// shows the ancestor sheet through it, so the backdrop propagates
+	// through every element regardless of CSS inheritance rules.
+	// Maintained by SyncBackdrop after each style computation.
+	Backdrop    cell.RGB
+	HasBackdrop bool
+
 	// CSS-driven effects; never set by ForTag. Align shifts flushed
 	// lines, Transform recases emitted text, Pre selects the verbatim
 	// no-wrap path (CSS white-space: pre / pre-wrap).
 	Align     Align
 	Transform Transform
 	Pre       bool
+}
+
+// SyncBackdrop updates the painted backdrop after declarations have
+// been applied: an element with its own background paints on it; one
+// without keeps the ancestor backdrop it inherited by copy (including
+// the case where a higher-priority background:transparent cleared
+// HasBg again).
+func (s *Style) SyncBackdrop() {
+	if s.HasBg {
+		s.HasBackdrop, s.Backdrop = true, s.Bg
+	}
 }
 
 var linkColor = cell.RGB{R: 95, G: 175, B: 255}
@@ -164,5 +186,6 @@ func ApplyInline(s Style, n *html.Node) Style {
 			}
 		}
 	}
+	s.SyncBackdrop()
 	return s
 }

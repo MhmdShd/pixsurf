@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MhmdShd/pixsurf/cell"
+	"github.com/MhmdShd/pixsurf/css"
 	"github.com/MhmdShd/pixsurf/dom"
 	"github.com/MhmdShd/pixsurf/style"
 )
@@ -1053,5 +1054,150 @@ func TestAlignCenterShiftsLineAndRanges(t *testing.T) {
 	}
 	if _, ok := d.LinkAt(0, 14); ok {
 		t.Error("LinkAt(0,14) matches past link end")
+	}
+}
+
+// docC lays out src with a real CSS engine over the given sheets, as a
+// full browser run with CSS enabled would.
+func docC(t *testing.T, src string, width int, sheets ...string) *Document {
+	t.Helper()
+	d, err := dom.Parse(src, "https://example.org/page")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Render(d, width, nil, nil, css.New(sheets))
+}
+
+func TestBackdropPropagatesThroughTransparentChildren(t *testing.T) {
+	src := `<body bgcolor="#ffffff"><div style="color:#1f1f1f">Gmail</div></body>`
+	d := docC(t, src, 20)
+	if len(d.Lines) == 0 {
+		t.Fatal("no lines")
+	}
+	white := cell.RGB{R: 255, G: 255, B: 255}
+	dark := cell.RGB{R: 0x1f, G: 0x1f, B: 0x1f}
+	line := d.Lines[0]
+	if len(line) != 20 {
+		t.Fatalf("line length = %d, want padded to 20", len(line))
+	}
+	for i, c := range line {
+		if !c.HasBg || c.Bg != white {
+			t.Errorf("cell %d: HasBg=%v Bg=%v, want ancestor white backdrop", i, c.HasBg, c.Bg)
+		}
+	}
+	if c := line[0]; !c.HasFg || c.Fg != dark {
+		t.Errorf("glyph fg = %v (has %v), want %v", c.Fg, c.HasFg, dark)
+	}
+	if !d.HasPageBg || d.PageBg != white {
+		t.Errorf("PageBg = %v,%v, want white", d.PageBg, d.HasPageBg)
+	}
+}
+
+func TestBackdropNotPaintedWhenNoBackgroundAnywhere(t *testing.T) {
+	d := docC(t, `<p>Hi <b>there</b></p>`, 20, "b { color: #ff0000 }")
+	if len(d.Lines) == 0 {
+		t.Fatal("no lines")
+	}
+	line := d.Lines[0]
+	if len(line) != 8 { // "Hi there", no trailing padding
+		t.Fatalf("line length = %d, want 8 (no padding)", len(line))
+	}
+	for i, c := range line {
+		if c.HasBg {
+			t.Errorf("cell %d has HasBg, want terminal default", i)
+		}
+	}
+	if d.HasPageBg {
+		t.Error("HasPageBg = true, want false")
+	}
+}
+
+func TestDeclaredBackgroundOverridesAncestor(t *testing.T) {
+	src := `<body bgcolor="#ffffff"><div><span style="background:#000080">own</span></div><div>after</div></body>`
+	d := docC(t, src, 20)
+	white := cell.RGB{R: 255, G: 255, B: 255}
+	navy := cell.RGB{R: 0, G: 0, B: 0x80}
+	var ownLine, afterLine = -1, -1
+	for i := range d.Lines {
+		switch lineText(d, i) {
+		case "own":
+			ownLine = i
+		case "after":
+			afterLine = i
+		}
+	}
+	if ownLine < 0 || afterLine < 0 {
+		t.Fatalf("lines not found in:\n%s", allText(d))
+	}
+	for i := 0; i < 3; i++ { // the span's own glyphs use its own background
+		if c := d.Lines[ownLine][i]; !c.HasBg || c.Bg != navy {
+			t.Errorf("own cell %d: HasBg=%v Bg=%v, want navy", i, c.HasBg, c.Bg)
+		}
+	}
+	for i := 0; i < 5; i++ { // the sibling reverts to the ancestor sheet
+		if c := d.Lines[afterLine][i]; !c.HasBg || c.Bg != white {
+			t.Errorf("after cell %d: HasBg=%v Bg=%v, want white", i, c.HasBg, c.Bg)
+		}
+	}
+}
+
+func TestFieldUsesCSSColoursWhenAvailable(t *testing.T) {
+	src := `<body bgcolor="#ffffff"><form><input type="text" name="q" size="5" value="ab">` +
+		`<input type="submit" value="Go"></form></body>`
+	d := docC(t, src, 60, "body { color: #202124 }")
+	if len(d.Fields) != 1 {
+		t.Fatalf("fields = %d, want 1", len(d.Fields))
+	}
+	white := cell.RGB{R: 255, G: 255, B: 255}
+	dark := cell.RGB{R: 0x20, G: 0x21, B: 0x24}
+	fl := d.Fields[0]
+	for col := fl.Start; col < fl.End; col++ {
+		c := d.Lines[fl.Line][col]
+		if c.Reverse {
+			t.Errorf("field col %d reverse-video, want CSS colours", col)
+		}
+		if !c.HasFg || c.Fg != dark || !c.HasBg || c.Bg != white {
+			t.Errorf("field col %d: fg=%v,%v bg=%v,%v, want dark on white", col, c.HasFg, c.Fg, c.HasBg, c.Bg)
+		}
+	}
+	if d.Lines[fl.Line][fl.Start].Rune != '[' || d.Lines[fl.Line][fl.End-1].Rune != ']' {
+		t.Error("bracket affordance missing on CSS-coloured field")
+	}
+	f := d.Forms[0]
+	if f.SubmitLine < 0 {
+		t.Fatal("no submit region")
+	}
+	sc := d.Lines[f.SubmitLine][f.SubmitStart]
+	if sc.Reverse {
+		t.Error("submit reverse-video, want CSS colours")
+	}
+	if !sc.Bold || !sc.HasFg || sc.Fg != dark || !sc.HasBg || sc.Bg != white {
+		t.Errorf("submit cell = %+v, want bold dark on white", sc)
+	}
+}
+
+func TestFieldFallsBackToReverse(t *testing.T) {
+	// No colours anywhere: the reverse-video box is the only thing
+	// keeping the field visible, exactly as before CSS support.
+	d := docC(t, `<form><input type="text" name="q" size="5" value="ab"></form>`, 60)
+	if len(d.Fields) != 1 {
+		t.Fatalf("fields = %d, want 1", len(d.Fields))
+	}
+	fl := d.Fields[0]
+	for col := fl.Start; col < fl.End; col++ {
+		c := d.Lines[fl.Line][col]
+		if !c.Reverse {
+			t.Errorf("field col %d not reverse-video with no usable colours", col)
+		}
+		if c.HasBg {
+			t.Errorf("field col %d has a background from nowhere", col)
+		}
+	}
+
+	// A page background but no foreground: still reverse, never invisible.
+	d2 := docC(t, `<body bgcolor="#ffffff"><form><input type="text" name="q" size="5"></form></body>`, 60)
+	fl2 := d2.Fields[0]
+	if c := d2.Lines[fl2.Line][fl2.Start]; !c.Reverse {
+		t.Error("field with backdrop but no foreground must keep reverse fallback")
 	}
 }

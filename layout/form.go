@@ -66,8 +66,8 @@ func (d *Document) SubmitAt(line, col int) (int, bool) {
 }
 
 // renderForm extracts a <form> and flows its children with the form open.
-func (w *walker) renderForm(n *dom.Node, st style.Style) {
-	w.blockStart()
+func (w *walker) renderForm(n *dom.Node, st, parentSt style.Style) {
+	w.blockStart(parentSt)
 	w.recordAnchor(n)
 	f := Form{
 		Method:      "get",
@@ -89,7 +89,7 @@ func (w *walker) renderForm(n *dom.Node, st style.Style) {
 	w.formIdx = len(w.doc.Forms) - 1
 	w.walkChildren(n, st)
 	w.formIdx = prev
-	w.blockEnd()
+	w.blockEnd(parentSt)
 }
 
 // emitInput dispatches one <input> by type. Inputs outside any <form>
@@ -191,11 +191,23 @@ func (w *walker) boxWidth(n *dom.Node, attr string) int {
 	return boxW
 }
 
-// emitFieldValueBox draws a reverse-video [value_____] box and records
-// the field with its hit-testable region; a too-long value shows its tail.
+// controlStyleUsable reports whether the resolved style paints a form
+// control with visible colours of its own — a foreground on a distinct
+// backdrop — so the reverse-video fallback is unnecessary. With either
+// half missing (or the two equal) the control would risk vanishing into
+// the page and reverse video stays.
+func controlStyleUsable(st style.Style) bool {
+	return st.HasFg && st.HasBackdrop && st.Fg != st.Backdrop
+}
+
+// emitFieldValueBox draws a [value_____] box and records the field with
+// its hit-testable region; a too-long value shows its tail. When the
+// resolved style supplies usable colours the box is drawn in them (the
+// [ ] brackets keep it recognisably a field); otherwise it falls back
+// to reverse video so a field never becomes invisible.
 func (w *walker) emitFieldValueBox(name, val string, boxW int, st style.Style) {
 	w.fitRun(boxW+2, st)
-	st.Reverse = true
+	st.Reverse = !controlStyleUsable(st)
 	w.putRune('[', st)
 	line := len(w.doc.Lines)
 	start := w.col - 1
@@ -220,11 +232,17 @@ func (w *walker) emitFieldValueBox(name, val string, boxW int, st style.Style) {
 }
 
 // emitSubmit draws a bold [ label ] button and records it as its form's
-// submit region (first one wins).
+// submit region (first one wins). Like field boxes it renders in its
+// resolved colours when they are usable; on a painted page without a
+// usable foreground it reverses so the label cannot vanish into the
+// sheet, and on an unpainted page it stays plain bold as before.
 func (w *walker) emitSubmit(label string, st style.Style) {
 	form := &w.doc.Forms[w.formIdx]
 	text := "[ " + label + " ]"
 	st.Bold = true
+	if !controlStyleUsable(st) && st.HasBackdrop {
+		st.Reverse = true
+	}
 	w.fitRun(runewidth.StringWidth(text), st)
 	line, start := -1, 0
 	for _, r := range text {
@@ -255,9 +273,9 @@ func (w *walker) fitRun(width int, st style.Style) {
 		sp = 0
 	}
 	if sp == 1 {
-		// the separator space carries only the surrounding background so a
+		// the separator space carries only the surrounding backdrop so a
 		// filled block stays solid; other attributes stay off as before
-		w.putRune(' ', style.Style{Bg: st.Bg, HasBg: st.HasBg})
+		w.putRune(' ', style.Style{Backdrop: st.Backdrop, HasBackdrop: st.HasBackdrop})
 	}
 }
 

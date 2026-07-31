@@ -69,6 +69,10 @@ func (e *Engine) Resolve(n *dom.Node, parent style.Style) style.Style {
 	for _, d := range e.cascade(n) {
 		applyDecl(&s, d.prop, d.val)
 	}
+	// The painted backdrop follows a different rule from the cascade:
+	// with no background of its own the element is transparent and
+	// keeps the ancestor backdrop copied from parent.
+	s.SyncBackdrop()
 	e.styles[n] = s
 	return s
 }

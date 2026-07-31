@@ -65,7 +65,7 @@ func (w *walker) emitImage(n *dom.Node, st style.Style) {
 			// Pixel lines carry no style on their cells: record the style
 			// background in effect so padding and blanks fill with it,
 			// never with the image's own edge colours.
-			w.hasStyleBg, w.styleBg = st.HasBg, st.Bg
+			w.hasStyleBg, w.styleBg = st.HasBackdrop, st.Backdrop
 			if w.emitPixels(img, dw, dh) {
 				return
 			}

@@ -64,19 +64,58 @@ func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues, style
 	out := &Document{Anchors: map[string]int{}}
 	out.Title = findTitle(d.Root)
 	out.PageBg, out.HasPageBg = pageBackground(d)
+	if !out.HasPageBg && styles != nil {
+		out.PageBg, out.HasPageBg = cssPageBackground(d, styles)
+	}
 	root := contentRoot(d)
 	w := &walker{doc: out, src: d, width: width, images: images, values: values, styles: styles, linkOpen: -1, formIdx: -1}
 	w.skipChrome = chromeSkipSafe(root)
 	rootSt := style.Style{}
+	if styles != nil {
+		// Resolve the elements above the content root so their inherited
+		// properties and painted backdrop are in effect for the walk even
+		// when the root is below <body>.
+		rootSt = resolveChain(root.Parent, styles)
+	}
 	if out.HasPageBg {
 		// seed the walk with the page background so every content line is
 		// painted even when the content root is below <body>
-		rootSt.HasBg, rootSt.Bg = true, out.PageBg
+		rootSt.HasBackdrop, rootSt.Backdrop = true, out.PageBg
 	}
-	w.hasStyleBg, w.styleBg = rootSt.HasBg, rootSt.Bg
+	w.hasStyleBg, w.styleBg = rootSt.HasBackdrop, rootSt.Backdrop
 	w.renderNode(root, rootSt)
 	w.flushLine()
 	return out
+}
+
+// resolveChain computes n's style by resolving its ancestor chain top
+// down, exactly as the body walk would have. Resolver memoisation makes
+// repeated calls cheap.
+func resolveChain(n *dom.Node, styles StyleResolver) style.Style {
+	if n == nil {
+		return style.Style{}
+	}
+	parent := resolveChain(n.Parent, styles)
+	if n.Type != dom.ElementNode {
+		return parent
+	}
+	return styles.Resolve(n, parent)
+}
+
+// cssPageBackground is the page sheet colour per the stylesheet: the
+// computed backdrop of the <body> (or <html>) element. It complements
+// pageBackground, which only sees attributes and inline styles.
+func cssPageBackground(d *dom.Doc, styles StyleResolver) (cell.RGB, bool) {
+	for _, tag := range []string{"body", "html"} {
+		n := findElement(d.Root, tag)
+		if n == nil {
+			continue
+		}
+		if st := resolveChain(n, styles); st.HasBackdrop {
+			return st.Backdrop, true
+		}
+	}
+	return cell.RGB{}, false
 }
 
 // pageBackground extracts the page's sheet color from the <body> (or
@@ -146,18 +185,21 @@ type walker struct {
 	lineBase int         // column where content starts (after indent)
 	started  bool        // startLine has run for the current line
 
-	pendingBlank  bool // emit one blank line before the next content
-	pendingSpace  bool // a collapsed space is owed before the next word
-	joinNextBlock bool // bullet-join window: the line still holds only an <li> marker
-	skipChrome    bool // skip nav/header/footer/aside subtrees
-	hfDepth       int  // nesting depth inside kept header/footer elements
+	pendingBlank  bool     // emit one blank line before the next content
+	blankHasBg    bool     // paint the pending blank with blankBg
+	blankBg       cell.RGB // backdrop of the pending blank's containing sheet
+	pendingSpace  bool     // a collapsed space is owed before the next word
+	joinNextBlock bool     // bullet-join window: the line still holds only an <li> marker
+	skipChrome    bool     // skip nav/header/footer/aside subtrees
+	hfDepth       int      // nesting depth inside kept header/footer elements
 
 	measuring bool // natural-width measurement: skip background fill
 
-	// Style-derived background currently in effect: the last background
-	// applied by a block/inline style (page background as the base).
-	// Padding and blank separators fill with this — never with the
-	// incidental colour of a content cell such as an image pixel.
+	// Style-derived backdrop currently in effect: the backdrop of the
+	// style last applied (page background as the base). Image-pixel
+	// lines pad with this — never with the incidental colour of a
+	// content cell such as an image pixel. Blank separators paint with
+	// blankBg instead (see requestBlank).
 	styleBg    cell.RGB
 	hasStyleBg bool
 	linePixels bool        // current line holds image pixel cells
@@ -202,6 +244,7 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 	if w.skipChrome && isChrome(n) {
 		return
 	}
+	parentSt := st // n's containing sheet: blank separators paint with it
 	if w.styles != nil {
 		if w.styles.Hidden(n) {
 			return
@@ -217,27 +260,27 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.flushLine()
 	case tag == "hr":
 		w.flushLine()
-		w.pendingBlank = true
+		w.requestBlank(parentSt)
 		w.recordAnchor(n)
 		for i := 0; i < w.width-w.indentCols(); i++ {
 			w.putRune('─', st)
 		}
 		w.flushLine()
-		w.pendingBlank = true
+		w.requestBlank(parentSt)
 	case tag == "pre":
-		w.blockStart()
+		w.blockStart(parentSt)
 		w.recordAnchor(n)
 		w.pre = true
 		w.walkChildren(n, st)
 		w.pre = false
-		w.blockEnd()
+		w.blockEnd(parentSt)
 	case tag == "blockquote":
-		w.blockStart()
+		w.blockStart(parentSt)
 		w.recordAnchor(n)
 		w.quote++
 		w.walkChildren(n, st)
 		w.quote--
-		w.blockEnd()
+		w.blockEnd(parentSt)
 	case tag == "ul" || tag == "ol":
 		if w.skipChrome && w.hfDepth > 0 && isLinkFarm(n) {
 			return // nav-list inside a kept header/footer (no nav markup)
@@ -246,7 +289,7 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		if !w.joinNextBlock { // a list opening on a bare bullet line joins it
 			w.flushLine()
 			if !nested {
-				w.pendingBlank = true
+				w.requestBlank(parentSt)
 			}
 		}
 		w.recordAnchor(n)
@@ -256,7 +299,7 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		if !w.joinNextBlock { // empty list on a bare bullet line: keep it open
 			w.flushLine()
 			if !nested {
-				w.pendingBlank = true
+				w.requestBlank(parentSt)
 			}
 		}
 	case tag == "li":
@@ -299,7 +342,7 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.closeLinkRange()
 		w.linkURL = ""
 	case tag == "form":
-		w.renderForm(n, st)
+		w.renderForm(n, st, parentSt)
 	case tag == "input":
 		w.recordAnchor(n)
 		w.emitInput(n, st)
@@ -312,7 +355,7 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.recordAnchor(n)
 		w.emitTextarea(n, st)
 	case tag == "table":
-		w.renderTable(n, st)
+		w.renderTable(n, st, parentSt)
 	case tag == "img":
 		w.recordAnchor(n)
 		w.emitImage(n, st)
@@ -341,10 +384,10 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		if hf {
 			w.hfDepth++
 		}
-		w.blockStart()
+		w.blockStart(parentSt)
 		w.recordAnchor(n)
 		w.walkChildren(n, st)
-		w.blockEnd()
+		w.blockEnd(parentSt)
 		if hf {
 			w.hfDepth--
 		}
@@ -385,22 +428,35 @@ func (w *walker) upcomingLine() int {
 }
 
 // blockStart breaks the line before a block and requests a blank
-// separator. While the bullet-join window is open — an <li> line still
-// holding only its marker — the break is suppressed at any wrapper
-// depth so the first real content joins the bullet line; emitWord
-// closes the window.
-func (w *walker) blockStart() {
+// separator painted with the block's containing sheet (parent is the
+// style of the block's parent). While the bullet-join window is open —
+// an <li> line still holding only its marker — the break is suppressed
+// at any wrapper depth so the first real content joins the bullet line;
+// emitWord closes the window.
+func (w *walker) blockStart(parent style.Style) {
 	if w.joinNextBlock {
 		return
 	}
 	w.flushLine()
-	w.pendingBlank = true
+	w.requestBlank(parent)
 }
 
-func (w *walker) blockEnd() {
+func (w *walker) blockEnd(parent style.Style) {
 	if w.joinNextBlock {
 		return // nothing after the marker yet (empty block): keep joining
 	}
 	w.flushLine()
+	w.requestBlank(parent)
+}
+
+// requestBlank asks for one blank separator line before the next
+// content. The blank is a between-block margin: transparent, so it
+// shows the backdrop of the parent of the blocks it separates — never
+// the colour of a small painted element (a button, say) that happened
+// to sit at the boundary. Consecutive requests overwrite; the last one
+// before the blank materializes is the outermost boundary crossed,
+// whose parent sheet is the right one.
+func (w *walker) requestBlank(parent style.Style) {
 	w.pendingBlank = true
+	w.blankHasBg, w.blankBg = parent.HasBackdrop, parent.Backdrop
 }

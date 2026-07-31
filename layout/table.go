@@ -14,16 +14,16 @@ import (
 // content is laid out by a nested mini-layout at the column width, so
 // nested tables flatten into sequential blocks naturally. colspan is
 // ignored.
-func (w *walker) renderTable(n *dom.Node, st style.Style) {
+func (w *walker) renderTable(n *dom.Node, st, parentSt style.Style) {
 	rows := tableRows(n)
 	if len(rows) == 0 { // no tr/td structure: fall back to block flow
-		w.blockStart()
+		w.blockStart(parentSt)
 		w.recordAnchor(n)
 		w.walkChildren(n, st)
-		w.blockEnd()
+		w.blockEnd(parentSt)
 		return
 	}
-	w.blockStart()
+	w.blockStart(parentSt)
 	w.recordAnchor(n)
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == dom.ElementNode && strings.EqualFold(c.Data, "caption") {
@@ -71,7 +71,7 @@ func (w *walker) renderTable(n *dom.Node, st style.Style) {
 			w.emitRow(subs, widths, height, st)
 		}
 	}
-	w.blockEnd()
+	w.blockEnd(parentSt)
 }
 
 // defaultImageCols is the assumed display width, in cells, of an <img>
@@ -229,7 +229,7 @@ func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 		})
 		mw.formIdx = 0
 	}
-	mw.hasStyleBg, mw.styleBg = st.HasBg, st.Bg
+	mw.hasStyleBg, mw.styleBg = st.HasBackdrop, st.Backdrop
 	mw.linkURL = w.linkURL // an <a> wrapping the table keeps its links inside
 	mw.skipChrome = w.skipChrome
 	mw.hfDepth = w.hfDepth
@@ -281,8 +281,8 @@ func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.St
 	// maps a sub line index to its kept output offset within the row.
 	gutter := cell.Cell{Rune: ' '}
 	pad := cell.Cell{}
-	if st.HasBg {
-		gutter.HasBg, gutter.Bg = true, st.Bg
+	if st.HasBackdrop {
+		gutter.HasBg, gutter.Bg = true, st.Backdrop
 		pad = gutter
 	}
 	newIdx := make([]int, height)
@@ -304,7 +304,7 @@ func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.St
 			newIdx[y] = -1
 			continue
 		}
-		for st.HasBg && len(line) < w.width {
+		for st.HasBackdrop && len(line) < w.width {
 			line = append(line, gutter)
 		}
 		newIdx[y] = len(w.doc.Lines) - rowBase
