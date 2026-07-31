@@ -178,3 +178,40 @@ func TestImagePixels(t *testing.T) {
 		t.Errorf("pixelLines = %d, exceeds 15-row cap", pixelLines)
 	}
 }
+
+func TestTableCaption(t *testing.T) {
+	d := doc(t, "<table><caption>Monthly Fees</caption><tr><td>aa</td><td>bb</td></tr></table>", 30)
+	txt := allText(d)
+	if !strings.Contains(txt, "Monthly Fees") {
+		t.Errorf("caption content missing:\n%s", txt)
+	}
+	if !strings.Contains(txt, "aa") || !strings.Contains(txt, "bb") {
+		t.Errorf("row content missing:\n%s", txt)
+	}
+	if strings.Index(txt, "Monthly Fees") > strings.Index(txt, "aa") {
+		t.Errorf("caption must precede rows:\n%s", txt)
+	}
+}
+
+func TestTableManyColumnsClipped(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("<table><tr>")
+	for i := 0; i < 30; i++ {
+		b.WriteString("<td>x</td>")
+	}
+	b.WriteString("</tr></table>")
+	d := doc(t, b.String(), 20)
+	for i, ln := range d.Lines {
+		if len(ln) > 20 {
+			t.Errorf("line %d has %d cells, want <= 20", i, len(ln))
+		}
+	}
+	if !strings.Contains(allText(d), "x") {
+		t.Errorf("row content entirely missing:\n%s", allText(d))
+	}
+	for _, l := range d.Links {
+		if l.End > 20 || l.Start >= 20 {
+			t.Errorf("link range beyond width: %+v", l)
+		}
+	}
+}

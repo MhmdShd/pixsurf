@@ -23,6 +23,12 @@ func (w *walker) renderTable(n *dom.Node, st style.Style) {
 	}
 	w.blockStart()
 	w.recordAnchor(n)
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == dom.ElementNode && strings.EqualFold(c.Data, "caption") {
+			w.walkChildren(c, style.ForTag("caption", st))
+			w.flushLine()
+		}
+	}
 	for _, row := range rows {
 		if len(row) == 0 {
 			continue
@@ -61,8 +67,8 @@ func tableRows(table *dom.Node) [][]*dom.Node {
 			switch strings.ToLower(c.Data) {
 			case "tr":
 				rows = append(rows, rowCells(c))
-			case "table", "td", "th":
-				// nested table or stray cell: not this table's rows
+			case "table", "td", "th", "caption":
+				// nested table, stray cell, or caption: not this table's rows
 			default:
 				walk(c)
 			}
@@ -91,9 +97,24 @@ func rowCells(tr *dom.Node) []*dom.Node {
 func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 	sub := &Document{Anchors: map[string]int{}}
 	mw := &walker{doc: sub, src: w.src, width: width, images: w.images, linkOpen: -1}
+	mw.linkURL = w.linkURL // an <a> wrapping the table keeps its links inside
 	mw.renderNode(n, st)
 	mw.flushLine()
 	return sub
+}
+
+// truncCells cuts a cell line to max columns, blanking a wide rune whose
+// continuation would be severed. Index == display column, so a plain slice
+// is column-accurate.
+func truncCells(line []cell.Cell, max int) []cell.Cell {
+	if len(line) <= max {
+		return line
+	}
+	out := line[:max]
+	if max > 0 && line[max].Continuation {
+		out = append(append([]cell.Cell{}, out[:max-1]...), cell.Cell{Rune: ' '})
+	}
+	return out
 }
 
 // emitRow merges the cells' mini-layouts side by side into output lines,
@@ -120,10 +141,23 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 
 	for j, sub := range subs {
 		for _, l := range sub.Links {
+			start, end := l.Start+xoffs[j], l.End+xoffs[j]
+			if start >= w.width { // column clipped entirely
+				continue
+			}
+			if end > w.width {
+				end = w.width
+			}
+			if s := xoffs[j] + colWidth; end > s { // clamp to own column
+				end = s
+			}
+			if end <= start {
+				continue
+			}
 			w.doc.Links = append(w.doc.Links, Link{
 				Line:  rowBase + l.Line,
-				Start: l.Start + xoffs[j],
-				End:   l.End + xoffs[j],
+				Start: start,
+				End:   end,
 				URL:   l.URL,
 			})
 		}
@@ -144,12 +178,12 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 				line = append(line, cell.Cell{Rune: ' '})
 			}
 			if y < len(sub.Lines) {
-				line = append(line, sub.Lines[y]...)
+				line = append(line, truncCells(sub.Lines[y], colWidth)...)
 			}
 			for len(line) < xoffs[j]+colWidth {
 				line = append(line, cell.Cell{})
 			}
 		}
-		w.doc.Lines = append(w.doc.Lines, line)
+		w.doc.Lines = append(w.doc.Lines, truncCells(line, w.width))
 	}
 }
