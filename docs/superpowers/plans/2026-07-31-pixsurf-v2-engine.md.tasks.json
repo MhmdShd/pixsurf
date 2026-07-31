@@ -11,9 +11,9 @@
       "description": "```json:metadata\n{\"files\": [\"style/style.go\", \"style/style_test.go\"], \"verifyCommand\": \"go test ./style/ -v\"}\n```" },
     { "id": 11, "subject": "v2 Task 5: layout flow core (TDD)", "status": "completed", "blockedBy": [7, 9, 10],
       "description": "```json:metadata\n{\"files\": [\"layout/layout.go\", \"layout/inline.go\", \"layout/layout_test.go\"], \"verifyCommand\": \"go test ./layout/ -v\"}\n```" },
-    { "id": 12, "subject": "v2 Task 6: layout tables + images (TDD)", "status": "pending", "blockedBy": [11],
+    { "id": 12, "subject": "v2 Task 6: layout tables + images (TDD)", "status": "completed", "blockedBy": [11],
       "description": "```json:metadata\n{\"files\": [\"layout/table.go\", \"layout/image.go\", \"layout/layout_test.go\"], \"verifyCommand\": \"go test ./layout/ -v\"}\n```" },
-    { "id": 13, "subject": "v2 Task 7: main rewrite, delete browser/, README", "status": "pending", "blockedBy": [8, 12],
+    { "id": 13, "subject": "v2 Task 7: main rewrite, delete browser/, README", "status": "completed", "blockedBy": [8, 12],
       "description": "```json:metadata\n{\"files\": [\"main.go\", \"README.md\"], \"verifyCommand\": \"go build -o pixsurf . && go vet ./... && go test ./... && ! grep chromedp go.mod\"}\n```" },
     { "id": 14, "subject": "v2 Task 8: smoke test + push", "status": "pending", "blockedBy": [13],
       "description": "```json:metadata\n{\"files\": [], \"verifyCommand\": \"go run ./smoke\"}\n```" }
