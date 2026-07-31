@@ -40,6 +40,10 @@ Site search works: click a search box, type, Enter (GET forms).
 
 Images load asynchronously — pages appear instantly and images fill in.
 
+pixsurf skips site chrome (nav bars, sidebars, footers) and starts at the
+article, so you are reading in the first screen instead of scrolling past
+menus. Tables size their columns to their content.
+
 ## Controls
 
 | Key | Action |
