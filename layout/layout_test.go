@@ -444,6 +444,24 @@ func TestNestedBlocksSingleBlank(t *testing.T) {
 	}
 }
 
+func TestTableProportionalColumns(t *testing.T) {
+	long := "the quick brown fox jumps over the lazy dog near the river bank today"
+	d := doc(t, "<table><tr><td>ID:</td><td>"+long+"</td></tr></table>", 60)
+	l0 := lineText(d, 0)
+	if !strings.HasPrefix(l0, "ID:") {
+		t.Fatalf("line0 = %q, want label first", l0)
+	}
+	at := strings.Index(l0, "the quick")
+	if at < 0 || at >= 8 {
+		t.Errorf("value starts at col %d, want < 8 (no wasted label space): %q", at, l0)
+	}
+	for i := range d.Lines {
+		if len(d.Lines[i]) > 60 {
+			t.Errorf("line %d width %d > 60", i, len(d.Lines[i]))
+		}
+	}
+}
+
 func TestTableManyColumnsClipped(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("<table><tr>")

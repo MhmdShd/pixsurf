@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/MhmdShd/pixsurf/cell"
@@ -8,10 +9,11 @@ import (
 	"github.com/MhmdShd/pixsurf/style"
 )
 
-// renderTable lays out a <table>: one output row-group per <tr>, columns
-// sharing the width equally with 1-space gutters. Each cell's content is
-// laid out by a nested mini-layout at the column width, so nested tables
-// flatten into sequential blocks naturally. colspan is ignored.
+// renderTable lays out a <table>: one output row-group per <tr>, column
+// widths proportional to their content with 1-space gutters. Each cell's
+// content is laid out by a nested mini-layout at the column width, so
+// nested tables flatten into sequential blocks naturally. colspan is
+// ignored.
 func (w *walker) renderTable(n *dom.Node, st style.Style) {
 	rows := tableRows(n)
 	if len(rows) == 0 { // no tr/td structure: fall back to block flow
@@ -29,28 +31,137 @@ func (w *walker) renderTable(n *dom.Node, st style.Style) {
 			w.flushLine()
 		}
 	}
+	// Column widths are content-proportional, computed per row shape
+	// (rows sharing a cell count share columns), so a full-width
+	// single-cell row does not inflate a narrow label column.
+	widthsByN := map[int][]int{}
+	for _, row := range rows {
+		n := len(row)
+		if n == 0 {
+			continue
+		}
+		nat := widthsByN[n]
+		if nat == nil {
+			nat = make([]int, n)
+			widthsByN[n] = nat
+		}
+		for j, cn := range row {
+			if v := w.naturalCellWidth(cn, st); v > nat[j] {
+				nat[j] = v
+			}
+		}
+	}
+	for n, nat := range widthsByN {
+		widthsByN[n] = fitColumns(nat, w.width)
+	}
 	for _, row := range rows {
 		if len(row) == 0 {
 			continue
 		}
-		ncols := len(row)
-		colWidth := (w.width - ncols + 1) / ncols
-		if colWidth < 1 {
-			colWidth = 1
-		}
-		subs := make([]*Document, ncols)
+		widths := widthsByN[len(row)]
+		subs := make([]*Document, len(row))
 		height := 0
 		for j, cn := range row {
-			subs[j] = w.miniLayout(cn, colWidth, st)
+			subs[j] = w.miniLayout(cn, widths[j], st)
 			if len(subs[j].Lines) > height {
 				height = len(subs[j].Lines)
 			}
 		}
 		if height > 0 {
-			w.emitRow(subs, colWidth, height)
+			w.emitRow(subs, widths, height)
 		}
 	}
 	w.blockEnd()
+}
+
+// defaultImageCols is the assumed display width of an <img> without a
+// usable width attribute (emitPixels renders ~1 cell per pixel column).
+const defaultImageCols = 24
+
+// naturalCellWidth is the display width a cell's content wants: its
+// longest laid-out line at full width (so wrapping never occurs), with
+// images counted at their declared pixel width.
+func (w *walker) naturalCellWidth(cn *dom.Node, st style.Style) int {
+	saved := w.images
+	w.images = nil // measure with placeholders; must not fetch
+	sub := w.miniLayout(cn, w.width, st)
+	w.images = saved
+	widest := 0
+	for _, ln := range sub.Lines {
+		if len(ln) > widest {
+			widest = len(ln)
+		}
+	}
+	if w.images != nil { // images render as pixels: account for their width
+		dom.Walk(cn, func(m *dom.Node) {
+			if m.Type != dom.ElementNode || !strings.EqualFold(m.Data, "img") {
+				return
+			}
+			cols := defaultImageCols
+			if v, err := strconv.Atoi(strings.TrimSpace(dom.Attr(m, "width"))); err == nil && v >= 0 {
+				cols = v
+			}
+			if cols > w.width {
+				cols = w.width
+			}
+			if cols > widest {
+				widest = cols
+			}
+		})
+	}
+	return widest
+}
+
+// fitColumns turns natural column widths into assigned widths within
+// avail total columns (1-space gutters between columns). When the
+// naturals fit, each column gets its natural width and the remainder
+// stays unused; otherwise columns scale down proportionally with a
+// floor so narrow label columns keep their width.
+func fitColumns(natural []int, avail int) []int {
+	n := len(natural)
+	out := make([]int, n)
+	sum := 0
+	for j, v := range natural {
+		if v < 1 {
+			v = 1
+		}
+		out[j] = v
+		sum += v
+	}
+	if sum+n-1 <= avail {
+		return out
+	}
+	target := avail - (n - 1)
+	if target < n {
+		target = n // at least one column each; overflow is clipped later
+	}
+	floor := 3
+	if floor*n > target {
+		floor = 1
+	}
+	total := 0
+	for j := range out {
+		v := out[j] * target / sum
+		if v < floor {
+			v = floor
+		}
+		out[j] = v
+		total += v
+	}
+	for total > target { // floors may overshoot: shave the widest columns
+		k := -1
+		for j := range out {
+			if out[j] > floor && (k < 0 || out[j] > out[k]) {
+				k = j
+			}
+		}
+		if k < 0 {
+			break
+		}
+		out[k]--
+		total--
+	}
+	return out
 }
 
 // tableRows collects this table's <tr> elements (via thead/tbody/tfoot),
@@ -122,7 +233,7 @@ func truncCells(line []cell.Cell, max int) []cell.Cell {
 // emitRow merges the cells' mini-layouts side by side into output lines,
 // padding short cells and offsetting link ranges and anchors into page
 // coordinates.
-func (w *walker) emitRow(subs []*Document, colWidth, height int) {
+func (w *walker) emitRow(subs []*Document, widths []int, height int) {
 	w.flushLine()
 	if w.pendingBlank && len(w.doc.Lines) > 0 {
 		w.doc.Lines = append(w.doc.Lines, nil)
@@ -137,7 +248,7 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 			x++ // gutter
 		}
 		xoffs[j] = x
-		x += colWidth
+		x += widths[j]
 	}
 	total := x
 
@@ -152,9 +263,9 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 				line = append(line, cell.Cell{Rune: ' '})
 			}
 			if y < len(sub.Lines) {
-				line = append(line, truncCells(sub.Lines[y], colWidth)...)
+				line = append(line, truncCells(sub.Lines[y], widths[j])...)
 			}
-			for len(line) < xoffs[j]+colWidth {
+			for len(line) < xoffs[j]+widths[j] {
 				line = append(line, cell.Cell{})
 			}
 		}
@@ -179,7 +290,7 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 			if end > w.width {
 				end = w.width
 			}
-			if s := xoffs[j] + colWidth; end > s { // clamp to own column
+			if s := xoffs[j] + widths[j]; end > s { // clamp to own column
 				end = s
 			}
 			if end <= start {
