@@ -43,21 +43,31 @@ func New() (*Browser, error) {
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
 
 	// chromedp ties the browser tab's lifetime to whichever context is
-	// passed into the *first* Run call, not just that call's scope — so a
-	// timeout context here must not be canceled once launch succeeds, or
-	// it kills the session outright. We only cancel it (via cancelLaunch)
-	// if launch itself fails or times out.
-	launchCtx, cancelLaunch := context.WithTimeout(ctx, launchTimeout)
-	if err := chromedp.Run(launchCtx); err != nil {
-		cancelLaunch()
+	// passed into the *first* Run call, not just that call's scope — so
+	// that context must never carry a deadline: a context.WithTimeout
+	// deadline fires regardless of whether its cancel func is ever
+	// called, which would kill the session partway through its life
+	// (observed: session died at exactly launchTimeout). Instead we run
+	// the launch on the plain (deadline-free) ctx in a goroutine and
+	// enforce launchTimeout externally via select.
+	errc := make(chan error, 1)
+	go func() { errc <- chromedp.Run(ctx) }()
+	select {
+	case err := <-errc:
+		if err != nil {
+			cancelCtx()
+			cancelAlloc()
+			return nil, fmt.Errorf("could not start Chrome — is Chrome or Chromium installed? (%w)", err)
+		}
+	case <-time.After(launchTimeout):
 		cancelCtx()
 		cancelAlloc()
-		return nil, fmt.Errorf("could not start Chrome — is Chrome or Chromium installed? (%w)", err)
+		return nil, fmt.Errorf("Chrome launch timed out after %v", launchTimeout)
 	}
 	// Teardown order matters: cancel the child context (Chrome tab/session)
 	// before the parent allocator context (Chrome process), so Close()
 	// shuts Chrome down gracefully instead of killing it outright.
-	return &Browser{ctx: ctx, cancels: []context.CancelFunc{cancelCtx, cancelAlloc, cancelLaunch}}, nil
+	return &Browser{ctx: ctx, cancels: []context.CancelFunc{cancelCtx, cancelAlloc}}, nil
 }
 
 // NormalizeURL prefixes https:// when no scheme is present.
