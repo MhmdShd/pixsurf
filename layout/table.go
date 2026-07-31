@@ -306,6 +306,33 @@ func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.St
 	}
 	total := x
 
+	// Centre or right-shift the whole row box when an alignment is in
+	// effect: <center> (and its CSS text-align equivalent) centres block
+	// children including tables in browsers, and an auto-margin override
+	// (w.alignForce) centres the table box the same way. The shift folds
+	// into xoffs, so every link/field/submit/anchor offset below lands at
+	// the shifted columns through the one existing offsetting path.
+	rowAlign := st.Align
+	if w.alignForce != style.AlignNone {
+		rowAlign = w.alignForce
+	}
+	shift := 0
+	if !w.measuring {
+		switch rowAlign {
+		case style.AlignCenter:
+			shift = (w.width - total) / 2
+		case style.AlignRight:
+			shift = w.width - total
+		}
+		if shift < 0 {
+			shift = 0
+		}
+	}
+	for j := range xoffs {
+		xoffs[j] += shift
+	}
+	total += shift
+
 	// Merge the cells' lines, dropping merged lines left entirely empty
 	// (cell-internal blank separators and clipped-away content); newIdx
 	// maps a sub line index to its kept output offset within the row.
@@ -318,6 +345,9 @@ func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.St
 	newIdx := make([]int, height)
 	for y := 0; y < height; y++ {
 		line := make([]cell.Cell, 0, total)
+		for len(line) < shift { // alignment padding before the first column
+			line = append(line, gutter)
+		}
 		for j, sub := range subs {
 			if j > 0 {
 				line = append(line, gutter)

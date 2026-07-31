@@ -252,6 +252,10 @@ func applyDecl(s *style.Style, prop, val string) {
 		}
 	case "margin", "margin-left", "margin-right":
 		style.ApplyMargin(s, prop, v)
+	case "justify-content":
+		if j, ok := style.ParseJustify(v); ok {
+			s.Justify = j
+		}
 	case "white-space":
 		switch v {
 		case "pre", "pre-wrap":

@@ -93,6 +93,12 @@ type Style struct {
 	// right. Never inherited.
 	MarginLeftAuto, MarginRightAuto bool
 
+	// Justify is the element's own justify-content main-axis alignment,
+	// meaningful only when the element is a flex/grid container: center
+	// centres the container's laid-out row(s), right right-aligns them.
+	// AlignNone/left values leave layout untouched. Never inherited.
+	Justify Align
+
 	// CSS-driven effects; never set by ForTag. Align shifts flushed
 	// lines, Transform recases emitted text, Pre selects the verbatim
 	// no-wrap path (CSS white-space: pre / pre-wrap).
@@ -121,6 +127,7 @@ func ForTag(tag string, parent Style) Style {
 	s.OwnBg = false
 	s.Display = DisplayUnset
 	s.MarginLeftAuto, s.MarginRightAuto = false, false
+	s.Justify = AlignNone
 	switch tag {
 	case "h1", "h2":
 		s.Bold, s.Underline = true, true
@@ -142,6 +149,12 @@ func ForTag(tag string, parent Style) Style {
 		s.Reverse = false
 	case "blockquote":
 		s.Dim = true
+	case "center":
+		// Legacy <center>: UA default text-align:center, inherited by
+		// descendants exactly as the CSS property would be. Sites still
+		// serving simple pages (google.com's no-JS homepage, say) centre
+		// their logo/search/buttons with it.
+		s.Align = AlignCenter
 	}
 	return s
 }
@@ -241,10 +254,28 @@ func ApplyInline(s Style, n *html.Node) Style {
 			}
 		case "margin", "margin-left", "margin-right":
 			ApplyMargin(&s, prop, v)
+		case "justify-content":
+			if j, ok := ParseJustify(v); ok {
+				s.Justify = j
+			}
 		}
 	}
 	s.SyncBackdrop()
 	return s
+}
+
+// ParseJustify maps a justify-content value to a line alignment.
+// center centres; flex-end/end/right right-align. flex-start, start,
+// left, the space-* distributions and anything unknown report false:
+// on a character grid they all leave the row where it already is.
+func ParseJustify(v string) (Align, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "center":
+		return AlignCenter, true
+	case "flex-end", "end", "right":
+		return AlignRight, true
+	}
+	return AlignNone, false
 }
 
 // ApplyMargin applies a margin-left, margin-right or margin shorthand

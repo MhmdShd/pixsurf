@@ -1343,6 +1343,92 @@ func TestFlexRowWraps(t *testing.T) {
 	}
 }
 
+func TestJustifyContentCentresRow(t *testing.T) {
+	d := docC(t, `<div class="row"><a href="/a">aa</a><a href="/b">bb</a></div>`, 40,
+		".row { display: flex; justify-content: center }")
+	// row is "aa bb" (5 cols); shift = (40-5)/2 = 17
+	if got := lineText(d, 0); got != strings.Repeat(" ", 17)+"aa bb" {
+		t.Errorf("line0 = %q, want centred \"aa bb\"", got)
+	}
+	if _, ok := d.LinkAt(0, 0); ok {
+		t.Error("LinkAt(0,0) matches before the centred row")
+	}
+	if u, ok := d.LinkAt(0, 17); !ok || u != "https://example.org/a" {
+		t.Errorf("LinkAt(0,17) = %q,%v, want first link at shifted column", u, ok)
+	}
+	if u, ok := d.LinkAt(0, 20); !ok || u != "https://example.org/b" {
+		t.Errorf("LinkAt(0,20) = %q,%v, want second link at shifted column", u, ok)
+	}
+}
+
+func TestJustifyContentFlexEndRightAligns(t *testing.T) {
+	d := docC(t, `<div class="row"><a href="/a">aa</a><a href="/b">bb</a></div>`, 40,
+		".row { display: flex; justify-content: flex-end }")
+	// row is "aa bb" (5 cols); shift = 40-5 = 35
+	if got := lineText(d, 0); got != strings.Repeat(" ", 35)+"aa bb" {
+		t.Errorf("line0 = %q, want right-aligned \"aa bb\"", got)
+	}
+	if u, ok := d.LinkAt(0, 35); !ok || u != "https://example.org/a" {
+		t.Errorf("LinkAt(0,35) = %q,%v, want first link at shifted column", u, ok)
+	}
+	if u, ok := d.LinkAt(0, 38); !ok || u != "https://example.org/b" {
+		t.Errorf("LinkAt(0,38) = %q,%v, want second link at shifted column", u, ok)
+	}
+}
+
+func TestJustifyContentDefaultUnchanged(t *testing.T) {
+	src := `<div class="row"><a href="/a">aa</a><a href="/b">bb</a></div>`
+	plain := docC(t, src, 40, ".row { display: flex }")
+	if got := lineText(plain, 0); got != "aa bb" {
+		t.Errorf("line0 = %q, want left-aligned \"aa bb\"", got)
+	}
+	start := docC(t, src, 40, ".row { display: flex; justify-content: flex-start }")
+	if got := lineText(start, 0); got != "aa bb" {
+		t.Errorf("flex-start line0 = %q, want left-aligned \"aa bb\"", got)
+	}
+}
+
+func TestJustifyContentDoesNotLeak(t *testing.T) {
+	d := docC(t, `<div class="row"><span>aa</span></div><p>after text</p>`, 40,
+		".row { display: flex; justify-content: center }")
+	got := contentLines(d)
+	if len(got) != 2 {
+		t.Fatalf("content lines = %q, want 2", got)
+	}
+	if got[0] != strings.Repeat(" ", 19)+"aa" {
+		t.Errorf("row line = %q, want centred \"aa\"", got[0])
+	}
+	if got[1] != "after text" {
+		t.Errorf("following line = %q, want left-aligned \"after text\"", got[1])
+	}
+}
+
+func TestCenterTagCentres(t *testing.T) {
+	d := doc(t, `<center><a href="/x">hi</a></center><p>after</p>`, 40)
+	// "hi" is 2 cols; shift = (40-2)/2 = 19
+	if got := lineText(d, 0); got != strings.Repeat(" ", 19)+"hi" {
+		t.Errorf("line0 = %q, want centred \"hi\"", got)
+	}
+	if u, ok := d.LinkAt(0, 19); !ok || u != "https://example.org/x" {
+		t.Errorf("LinkAt(0,19) = %q,%v, want link at shifted columns", u, ok)
+	}
+	got := contentLines(d)
+	if len(got) != 2 || got[1] != "after" {
+		t.Errorf("content lines = %q, want centring not to leak past </center>", got)
+	}
+}
+
+func TestCenterTagCentresTable(t *testing.T) {
+	d := doc(t, `<center><table><tr><td><a href="/x">abcd</a></td></tr></table></center>`, 40)
+	// table box is 4 cols; shift = (40-4)/2 = 18
+	if got := lineText(d, 0); got != strings.Repeat(" ", 18)+"abcd" {
+		t.Errorf("line0 = %q, want centred table row", got)
+	}
+	if u, ok := d.LinkAt(0, 18); !ok || u != "https://example.org/x" {
+		t.Errorf("LinkAt(0,18) = %q,%v, want link at shifted columns", u, ok)
+	}
+}
+
 func TestAutoMarginCentres(t *testing.T) {
 	d := docC(t, `<div style="width:20px;margin:0 auto"><a href="/x">hi</a></div>`, 40)
 	// "hi" is 2 cols; shift = (40-2)/2 = 19

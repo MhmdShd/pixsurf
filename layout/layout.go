@@ -294,7 +294,7 @@ var blockTags = map[string]bool{
 	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
 	"tr": true, "figure": true, "figcaption": true,
 	"form": true, "fieldset": true, "address": true, "dl": true,
-	"dt": true, "dd": true,
+	"dt": true, "dd": true, "center": true,
 }
 
 // extraBlockish are tags with dedicated handlers that are nonetheless
@@ -377,6 +377,19 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		} else {
 			w.alignForce = style.AlignRight
 		}
+		defer func() { w.alignForce = saved }()
+	}
+
+	// justify-content on a flex/grid container aligns the container's
+	// inline row via the same alignForce override auto margins use, so
+	// link/field/submit/anchor ranges shift with the line. Set after the
+	// auto-margin override: on one element, justify-content is the more
+	// specific signal for where the container's own row sits, so it wins;
+	// the deferred restores unwind in reverse, putting the outer value
+	// back once the container closes so siblings are unaffected.
+	if flexC && st.Justify != style.AlignNone {
+		saved := w.alignForce
+		w.alignForce = st.Justify
 		defer func() { w.alignForce = saved }()
 	}
 
