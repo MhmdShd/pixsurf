@@ -62,6 +62,10 @@ func (w *walker) emitImage(n *dom.Node, st style.Style) {
 			case hasH:
 				dw, dh = ah*b.Dx()/b.Dy(), ah
 			}
+			// Pixel lines carry no style on their cells: record the style
+			// background in effect so padding and blanks fill with it,
+			// never with the image's own edge colours.
+			w.hasStyleBg, w.styleBg = st.HasBg, st.Bg
 			if w.emitPixels(img, dw, dh) {
 				return
 			}
@@ -135,12 +139,15 @@ func (w *walker) emitPixels(img image.Image, displayW, displayH int) bool {
 	return true
 }
 
-// putCell appends a prebuilt cell to the current line, keeping the
-// link-range and line-start bookkeeping putRune provides.
+// putCell appends a prebuilt image pixel cell to the current line, keeping
+// the link-range and line-start bookkeeping putRune provides. The line is
+// marked as pixel-bearing so background fill never treats the pixels'
+// incidental colours as a style background.
 func (w *walker) putCell(c cell.Cell) {
 	if !w.started {
 		w.startLine()
 	}
+	w.linePixels = true
 	if w.linkURL != "" && w.linkOpen < 0 {
 		w.linkOpen = w.col
 	}

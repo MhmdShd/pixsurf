@@ -63,6 +63,7 @@ func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues) *Docu
 		// painted even when the content root is below <body>
 		rootSt.HasBg, rootSt.Bg = true, out.PageBg
 	}
+	w.hasStyleBg, w.styleBg = rootSt.HasBg, rootSt.Bg
 	w.renderNode(root, rootSt)
 	w.flushLine()
 	return out
@@ -141,6 +142,14 @@ type walker struct {
 	hfDepth       int  // nesting depth inside kept header/footer elements
 
 	measuring bool // natural-width measurement: skip background fill
+
+	// Style-derived background currently in effect: the last background
+	// applied by a block/inline style (page background as the base).
+	// Padding and blank separators fill with this — never with the
+	// incidental colour of a content cell such as an image pixel.
+	styleBg    cell.RGB
+	hasStyleBg bool
+	linePixels bool // current line holds image pixel cells
 
 	pre   bool // inside <pre>: verbatim text, no wrap
 	quote int  // blockquote nesting depth (2 cols each)

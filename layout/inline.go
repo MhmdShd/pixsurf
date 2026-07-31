@@ -104,6 +104,7 @@ func (w *walker) putRune(r rune, st style.Style) {
 	if !w.started {
 		w.startLine()
 	}
+	w.hasStyleBg, w.styleBg = st.HasBg, st.Bg
 	if w.linkURL != "" && w.linkOpen < 0 {
 		w.linkOpen = w.col
 	}
@@ -116,23 +117,21 @@ func (w *walker) putRune(r rune, st style.Style) {
 	w.col += rw
 }
 
-// appendBlank materializes one blank separator line. When the line above
-// ends with a background color — a painted block — the blank is painted
-// full content width with that color so a background sheet has no dark
-// gaps; otherwise it stays a zero-length line exactly as before. Skipped
+// appendBlank materializes one blank separator line. When a style-derived
+// background is in effect — a painted block or the page background — the
+// blank is painted full content width with that color so a background
+// sheet has no dark gaps; otherwise it stays a zero-length line exactly
+// as before. The fill deliberately never comes from a content cell: an
+// image's pixel colours must not smear into the separator. Skipped
 // styling while measuring: painting would inflate natural cell widths.
 func (w *walker) appendBlank() {
-	if !w.measuring {
-		prev := w.doc.Lines[len(w.doc.Lines)-1]
-		if n := len(prev); n > 0 && prev[n-1].HasBg {
-			bg := prev[n-1].Bg
-			ln := make([]cell.Cell, w.width)
-			for i := range ln {
-				ln[i] = cell.Cell{Rune: ' ', HasBg: true, Bg: bg}
-			}
-			w.doc.Lines = append(w.doc.Lines, ln)
-			return
+	if !w.measuring && w.hasStyleBg {
+		ln := make([]cell.Cell, w.width)
+		for i := range ln {
+			ln[i] = cell.Cell{Rune: ' ', HasBg: true, Bg: w.styleBg}
 		}
+		w.doc.Lines = append(w.doc.Lines, ln)
+		return
 	}
 	w.doc.Lines = append(w.doc.Lines, nil)
 }
@@ -174,6 +173,7 @@ func (w *walker) flushLine() {
 	w.fillBackground()
 	w.doc.Lines = append(w.doc.Lines, w.line)
 	w.line = nil
+	w.linePixels = false
 	w.col = 0
 	w.lineBase = 0
 	w.started = false
@@ -188,6 +188,26 @@ func (w *walker) flushLine() {
 // every background line look content-width wide.
 func (w *walker) fillBackground() {
 	if w.measuring {
+		return
+	}
+	if w.linePixels {
+		// Image pixel cells carry per-pixel colours, not a style
+		// background: they are excluded from consideration entirely.
+		// Pad (and paint the leading indent) only with the style
+		// background in effect; with none, the line stays as built.
+		if !w.hasStyleBg {
+			return
+		}
+		for i := range w.line {
+			if !w.line[i].HasBg {
+				w.line[i].HasBg = true
+				w.line[i].Bg = w.styleBg
+			}
+		}
+		for w.col < w.width {
+			w.line = append(w.line, cell.Cell{Rune: ' ', HasBg: true, Bg: w.styleBg})
+			w.col++
+		}
 		return
 	}
 	first, last := -1, -1

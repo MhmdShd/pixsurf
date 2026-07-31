@@ -851,3 +851,84 @@ func TestTableGuttersCarryBackground(t *testing.T) {
 		t.Errorf("gutter cell: HasBg=%v Bg=%v, want HasBg with %v", row[gut].HasBg, row[gut].Bg, want)
 	}
 }
+
+// pixelLines returns the indexes of lines that contain image pixel cells.
+func pixelLines(d *Document) []int {
+	var idx []int
+	for i, ln := range d.Lines {
+		for _, c := range ln {
+			if c.Rune == '▀' && c.HasFg && c.HasBg {
+				idx = append(idx, i)
+				break
+			}
+		}
+	}
+	return idx
+}
+
+func TestImagePixelsDoNotSmearPadding(t *testing.T) {
+	fetch, _ := solidImage(64, 32) // solid red {200,0,0}
+	d := renderWith(t, `<body bgcolor="#ffffff"><img src="/x.png"></body>`, 60, fetch)
+	white := cell.RGB{R: 255, G: 255, B: 255}
+	red := cell.RGB{R: 200}
+	lines := pixelLines(d)
+	if len(lines) == 0 {
+		t.Fatal("no pixel lines rendered")
+	}
+	for _, i := range lines {
+		ln := d.Lines[i]
+		if len(ln) != 60 {
+			t.Fatalf("line %d length = %d, want 60 (padded full width)", i, len(ln))
+		}
+		for j, c := range ln {
+			if c.Rune == '▀' {
+				if c.Bg != red || c.Fg != red {
+					t.Errorf("line %d pixel %d = Fg %v Bg %v, want red %v", i, j, c.Fg, c.Bg, red)
+				}
+				continue
+			}
+			if !c.HasBg || c.Bg != white {
+				t.Errorf("line %d padding cell %d: HasBg=%v Bg=%v, want white %v", i, j, c.HasBg, c.Bg, white)
+			}
+		}
+	}
+}
+
+func TestImageLineNoBackgroundNoPadding(t *testing.T) {
+	fetch, _ := solidImage(64, 32)
+	d := renderWith(t, `<img src="/x.png">`, 60, fetch)
+	lines := pixelLines(d)
+	if len(lines) == 0 {
+		t.Fatal("no pixel lines rendered")
+	}
+	for _, i := range lines {
+		for j, c := range d.Lines[i] {
+			if c.Rune != '▀' {
+				t.Errorf("line %d cell %d = %q, want only pixel cells (no padding)", i, j, c.Rune)
+			}
+		}
+	}
+}
+
+func TestBlankSeparatorUsesStyleBackground(t *testing.T) {
+	fetch, _ := solidImage(64, 32)
+	d := renderWith(t, `<body bgcolor="#ffffff"><p><img src="/x.png"></p><p>after</p></body>`, 60, fetch)
+	lines := pixelLines(d)
+	if len(lines) == 0 {
+		t.Fatal("no pixel lines rendered")
+	}
+	blank := lines[len(lines)-1] + 1
+	if blank >= len(d.Lines) {
+		t.Fatal("no line after the image")
+	}
+	ln := d.Lines[blank]
+	if len(ln) != 60 {
+		t.Fatalf("blank separator length = %d, want 60 (painted)", len(ln))
+	}
+	white := cell.RGB{R: 255, G: 255, B: 255}
+	for j, c := range ln {
+		if !c.HasBg || c.Bg != white {
+			t.Errorf("blank cell %d: HasBg=%v Bg=%v, want white %v", j, c.HasBg, c.Bg, white)
+		}
+	}
+}
