@@ -98,6 +98,7 @@ func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 	sub := &Document{Anchors: map[string]int{}}
 	mw := &walker{doc: sub, src: w.src, width: width, images: w.images, values: w.values, linkOpen: -1, formIdx: -1}
 	mw.linkURL = w.linkURL // an <a> wrapping the table keeps its links inside
+	mw.skipChrome = w.skipChrome
 	mw.renderNode(n, st)
 	mw.flushLine()
 	return sub
@@ -126,6 +127,7 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 		w.doc.Lines = append(w.doc.Lines, nil)
 	}
 	w.pendingBlank = false
+	w.contentSince = true // row lines are appended below
 	rowBase := len(w.doc.Lines)
 
 	xoffs := make([]int, len(subs))
@@ -139,8 +141,37 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 	}
 	total := x
 
+	// Merge the cells' lines, dropping merged lines left entirely empty
+	// (cell-internal blank separators and clipped-away content); newIdx
+	// maps a sub line index to its kept output offset within the row.
+	newIdx := make([]int, height)
+	for y := 0; y < height; y++ {
+		line := make([]cell.Cell, 0, total)
+		for j, sub := range subs {
+			if j > 0 {
+				line = append(line, cell.Cell{Rune: ' '})
+			}
+			if y < len(sub.Lines) {
+				line = append(line, truncCells(sub.Lines[y], colWidth)...)
+			}
+			for len(line) < xoffs[j]+colWidth {
+				line = append(line, cell.Cell{})
+			}
+		}
+		line = truncCells(line, w.width)
+		if emptyCells(line) {
+			newIdx[y] = -1
+			continue
+		}
+		newIdx[y] = len(w.doc.Lines) - rowBase
+		w.doc.Lines = append(w.doc.Lines, line)
+	}
+
 	for j, sub := range subs {
 		for _, l := range sub.Links {
+			if l.Line >= height || newIdx[l.Line] < 0 {
+				continue // line was dropped: no visible cells to hit
+			}
 			start, end := l.Start+xoffs[j], l.End+xoffs[j]
 			if start >= w.width { // column clipped entirely
 				continue
@@ -155,7 +186,7 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 				continue
 			}
 			w.doc.Links = append(w.doc.Links, Link{
-				Line:  rowBase + l.Line,
+				Line:  rowBase + newIdx[l.Line],
 				Start: start,
 				End:   end,
 				URL:   l.URL,
@@ -166,24 +197,29 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 				if ln >= height {
 					ln = height - 1
 				}
-				w.doc.Anchors[id] = rowBase + ln
+				for ln > 0 && newIdx[ln] < 0 {
+					ln-- // anchor on a dropped line: nearest kept above
+				}
+				kept := newIdx[ln]
+				if kept < 0 {
+					kept = 0
+				}
+				w.doc.Anchors[id] = rowBase + kept
 			}
 		}
 	}
+}
 
-	for y := 0; y < height; y++ {
-		line := make([]cell.Cell, 0, total)
-		for j, sub := range subs {
-			if j > 0 {
-				line = append(line, cell.Cell{Rune: ' '})
-			}
-			if y < len(sub.Lines) {
-				line = append(line, truncCells(sub.Lines[y], colWidth)...)
-			}
-			for len(line) < xoffs[j]+colWidth {
-				line = append(line, cell.Cell{})
-			}
+// emptyCells reports whether a merged row line shows nothing (only
+// spaces, padding, and continuations).
+func emptyCells(line []cell.Cell) bool {
+	for _, c := range line {
+		if c.Continuation {
+			continue
 		}
-		w.doc.Lines = append(w.doc.Lines, truncCells(line, w.width))
+		if c.Rune != 0 && c.Rune != ' ' {
+			return false
+		}
 	}
+	return true
 }

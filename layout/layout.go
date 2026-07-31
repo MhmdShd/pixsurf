@@ -48,8 +48,10 @@ func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues) *Docu
 	}
 	out := &Document{Anchors: map[string]int{}}
 	out.Title = findTitle(d.Root)
+	root := contentRoot(d)
 	w := &walker{doc: out, src: d, width: width, images: images, values: values, linkOpen: -1, formIdx: -1}
-	w.renderNode(d.Root, style.Style{})
+	w.skipChrome = chromeSkipSafe(root)
+	w.renderNode(root, style.Style{})
 	w.flushLine()
 	return out
 }
@@ -92,8 +94,11 @@ type walker struct {
 	lineBase int         // column where content starts (after indent)
 	started  bool        // startLine has run for the current line
 
-	pendingBlank bool // emit one blank line before the next content
-	pendingSpace bool // a collapsed space is owed before the next word
+	pendingBlank  bool // emit one blank line before the next content
+	pendingSpace  bool // a collapsed space is owed before the next word
+	contentSince  bool // content emitted since a blank separator last materialized
+	joinNextBlock bool // suppress the next blockStart break (li bullet joining)
+	skipChrome    bool // skip nav/header/footer/aside subtrees
 
 	pre   bool // inside <pre>: verbatim text, no wrap
 	quote int  // blockquote nesting depth (2 cols each)
@@ -129,6 +134,9 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 
 	tag := strings.ToLower(n.Data)
 	if style.Hidden(tag) {
+		return
+	}
+	if w.skipChrome && isChrome(n) {
 		return
 	}
 	st = style.ApplyInline(style.ForTag(tag, st), n)
@@ -190,8 +198,11 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 			w.putRune(r, st)
 		}
 		w.pendingSpace = false
+		w.joinNextBlock = true // a leading block child stays on the bullet line
 		w.walkChildren(n, st)
+		w.joinNextBlock = false
 		w.flushLine()
+		w.pendingBlank = false // items pack tightly; ul/ol owns outer blanks
 	case tag == "a":
 		w.recordAnchor(n)
 		href := dom.Attr(n, "href")
@@ -282,12 +293,24 @@ func (w *walker) upcomingLine() int {
 	return ln
 }
 
+// blockStart breaks the line before a block and requests a blank
+// separator — but only when content has actually been emitted since the
+// last separator, so nested wrapper containers don't stack separators.
+// Inside an <li>, the first block child instead joins the bullet line.
 func (w *walker) blockStart() {
+	if w.joinNextBlock {
+		w.joinNextBlock = false
+		return
+	}
 	w.flushLine()
-	w.pendingBlank = true
+	if w.contentSince {
+		w.pendingBlank = true
+	}
 }
 
 func (w *walker) blockEnd() {
 	w.flushLine()
-	w.pendingBlank = true
+	if w.contentSince {
+		w.pendingBlank = true
+	}
 }

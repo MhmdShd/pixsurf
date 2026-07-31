@@ -42,6 +42,7 @@ func (w *walker) emitText(text string, st style.Style) {
 // emitWord appends one word, breaking the line when it doesn't fit and
 // hard-splitting words wider than the line.
 func (w *walker) emitWord(word string, st style.Style) {
+	w.joinNextBlock = false // inline text ends any bullet-joining window
 	wl := runewidth.StringWidth(word)
 	sp := 0
 	if w.pendingSpace && w.hasContent() {
@@ -122,6 +123,7 @@ func (w *walker) startLine() {
 		w.doc.Lines = append(w.doc.Lines, nil)
 	}
 	w.pendingBlank = false
+	w.contentSince = true // a content line is beginning
 	w.started = true
 	for i := 0; i < w.indentCols(); i++ {
 		w.line = append(w.line, cell.Cell{Rune: ' ', Dim: true})

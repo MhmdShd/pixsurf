@@ -341,6 +341,56 @@ func TestTableCaption(t *testing.T) {
 	}
 }
 
+func TestContentRootPrefersMain(t *testing.T) {
+	nav := `<nav><a href="/a">HomeLink</a> <a href="/b">AboutLink</a> <a href="/c">MenuLink</a></nav>`
+	para := strings.Repeat("the quick brown fox jumps over the lazy dog ", 10)
+	d := doc(t, nav+`<main><p>`+para+`</p></main>`, 100)
+	txt := allText(d)
+	if !strings.Contains(txt, "quick brown fox") {
+		t.Errorf("main paragraph missing:\n%s", txt)
+	}
+	if strings.Contains(txt, "HomeLink") || strings.Contains(txt, "AboutLink") {
+		t.Errorf("nav chrome leaked into output:\n%s", txt)
+	}
+}
+
+func TestContentRootFallsBackWhenMainTiny(t *testing.T) {
+	body := strings.Repeat("plenty of real body prose here ", 20)
+	d := doc(t, `<main><p>tiny</p></main><p>`+body+`</p>`, 100)
+	txt := allText(d)
+	if !strings.Contains(txt, "plenty of real body prose") {
+		t.Errorf("body text lost when main is tiny:\n%s", txt)
+	}
+}
+
+func TestChromeSkipNotAppliedWhenPageIsAllChrome(t *testing.T) {
+	d := doc(t, `<nav><a href="/one">first link</a> <a href="/two">second link</a></nav>`, 60)
+	txt := allText(d)
+	if !strings.Contains(txt, "first link") || !strings.Contains(txt, "second link") {
+		t.Errorf("all-chrome page must still render (safety valve):\n%s", txt)
+	}
+}
+
+func TestNoOrphanBullets(t *testing.T) {
+	d := doc(t, "<ul><li><div>alpha</div></li><li><p>beta</p></li></ul>", 40)
+	txt := allText(d)
+	if !strings.Contains(txt, "• alpha") || !strings.Contains(txt, "• beta") {
+		t.Errorf("bullets not joined to block content:\n%s", txt)
+	}
+	for i := range d.Lines {
+		if strings.TrimSpace(lineText(d, i)) == "•" {
+			t.Errorf("line %d is a bare bullet:\n%s", i, txt)
+		}
+	}
+}
+
+func TestNestedBlocksSingleBlank(t *testing.T) {
+	d := doc(t, "<div><div><div><p>a</p></div></div></div><p>b</p>", 40)
+	if got, want := allText(d), "a\n\nb"; got != want {
+		t.Errorf("text = %q, want %q", got, want)
+	}
+}
+
 func TestTableManyColumnsClipped(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("<table><tr>")
