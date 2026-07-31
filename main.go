@@ -78,7 +78,7 @@ func (a *app) load(rawURL string) bool {
 		a.lastErr = err.Error()
 		return false
 	}
-	a.doc = layout.Render(d, a.cols, a.fetcher())
+	a.doc = layout.Render(d, a.cols, a.fetcher(), nil) // nil until v0.3 Task 3
 	a.url = finalURL
 	if truncated {
 		a.lastErr = "page truncated at 5MB"

@@ -23,6 +23,8 @@ type Document struct {
 	Links   []Link
 	Anchors map[string]int
 	Title   string
+	Forms   []Form
+	Fields  []Field
 }
 
 // ImageFetcher loads an image by absolute URL; nil disables images.
@@ -38,14 +40,15 @@ func (d *Document) LinkAt(line, col int) (string, bool) {
 	return "", false
 }
 
-// Render lays out doc at the given content width.
-func Render(d *dom.Doc, width int, images ImageFetcher) *Document {
+// Render lays out doc at the given content width. values holds
+// user-entered form field values (keyed by ValuesKey); nil is fine.
+func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues) *Document {
 	if width < 1 {
 		width = 1
 	}
 	out := &Document{Anchors: map[string]int{}}
 	out.Title = findTitle(d.Root)
-	w := &walker{doc: out, src: d, width: width, images: images, linkOpen: -1}
+	w := &walker{doc: out, src: d, width: width, images: images, values: values, linkOpen: -1, formIdx: -1}
 	w.renderNode(d.Root, style.Style{})
 	w.flushLine()
 	return out
@@ -98,6 +101,9 @@ type walker struct {
 
 	linkURL  string // open link URL, "" when none
 	linkOpen int    // column where the open link's range began on this line; -1 none
+
+	values  FormValues // user-entered field values; nil is fine
+	formIdx int        // index of the open <form> in doc.Forms; -1 none
 }
 
 var blockTags = map[string]bool{
@@ -202,6 +208,14 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.walkChildren(n, st)
 		w.closeLinkRange()
 		w.linkURL = ""
+	case tag == "form":
+		w.renderForm(n, st)
+	case tag == "input":
+		w.recordAnchor(n)
+		w.emitInput(n, st)
+	case tag == "button":
+		w.recordAnchor(n)
+		w.emitButton(n, st)
 	case tag == "table":
 		w.renderTable(n, st)
 	case tag == "img":

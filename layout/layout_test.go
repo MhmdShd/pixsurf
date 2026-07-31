@@ -11,11 +11,16 @@ import (
 
 func doc(t *testing.T, src string, width int) *Document {
 	t.Helper()
+	return docV(t, src, width, nil)
+}
+
+func docV(t *testing.T, src string, width int, values FormValues) *Document {
+	t.Helper()
 	d, err := dom.Parse(src, "https://example.org/page")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Render(d, width, nil)
+	return Render(d, width, nil, values)
 }
 
 func lineText(d *Document, i int) string {
@@ -164,7 +169,7 @@ func TestImagePixels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := Render(d, 20, fetch)
+	out := Render(d, 20, fetch, nil)
 	var pixelLines int
 	for _, ln := range out.Lines {
 		if len(ln) > 0 && ln[0].Rune == '▀' && ln[0].HasFg && ln[0].HasBg {
@@ -176,6 +181,149 @@ func TestImagePixels(t *testing.T) {
 	}
 	if pixelLines > 15 {
 		t.Errorf("pixelLines = %d, exceeds 15-row cap", pixelLines)
+	}
+}
+
+func TestFormExtraction(t *testing.T) {
+	d := doc(t, `<form action="/search" method="GET">
+		<input type="hidden" name="lang" value="en">
+		<input type="text" name="q" value="cats">
+		<input type="submit" value="Go">
+	</form>`, 60)
+	if len(d.Forms) != 1 {
+		t.Fatalf("forms = %d, want 1", len(d.Forms))
+	}
+	f := d.Forms[0]
+	if f.Action != "https://example.org/search" {
+		t.Errorf("action = %q", f.Action)
+	}
+	if f.Method != "get" {
+		t.Errorf("method = %q, want lowercased get", f.Method)
+	}
+	if got := f.Hidden.Get("lang"); got != "en" {
+		t.Errorf("hidden lang = %q", got)
+	}
+	if len(d.Fields) != 1 {
+		t.Fatalf("fields = %d, want 1 (hidden/submit are not Fields)", len(d.Fields))
+	}
+	fl := d.Fields[0]
+	if fl.Name != "q" || fl.Value != "cats" || fl.FormIdx != 0 {
+		t.Errorf("field = %+v", fl)
+	}
+	if f.SubmitLine < 0 || f.SubmitEnd <= f.SubmitStart {
+		t.Fatalf("submit region unset: %+v", f)
+	}
+	if !strings.Contains(lineText(d, f.SubmitLine), "[ Go ]") {
+		t.Errorf("submit line = %q, want [ Go ]", lineText(d, f.SubmitLine))
+	}
+	if idx, ok := d.SubmitAt(f.SubmitLine, f.SubmitStart); !ok || idx != 0 {
+		t.Errorf("SubmitAt(start) = %d,%v", idx, ok)
+	}
+	if idx, ok := d.SubmitAt(f.SubmitLine, f.SubmitEnd-1); !ok || idx != 0 {
+		t.Errorf("SubmitAt(end-1) = %d,%v", idx, ok)
+	}
+	if _, ok := d.SubmitAt(f.SubmitLine, f.SubmitEnd); ok {
+		t.Error("SubmitAt(end) should miss (End exclusive)")
+	}
+}
+
+func TestFormDefaults(t *testing.T) {
+	d := doc(t, `<form><input name="a"><input type="text"></form>`, 60)
+	if len(d.Forms) != 1 {
+		t.Fatalf("forms = %d, want 1", len(d.Forms))
+	}
+	f := d.Forms[0]
+	if f.Action != "https://example.org/page" {
+		t.Errorf("default action = %q, want page URL", f.Action)
+	}
+	if f.Method != "get" {
+		t.Errorf("default method = %q, want get", f.Method)
+	}
+	if f.SubmitLine != -1 || f.SubmitStart != -1 || f.SubmitEnd != -1 {
+		t.Errorf("no submit button: region should be -1s, got %+v", f)
+	}
+	// input without type → text field; nameless input rendered with Name ""
+	if len(d.Fields) != 2 {
+		t.Fatalf("fields = %d, want 2", len(d.Fields))
+	}
+	if d.Fields[0].Name != "a" {
+		t.Errorf("field0 name = %q", d.Fields[0].Name)
+	}
+	if d.Fields[1].Name != "" {
+		t.Errorf("field1 name = %q, want empty (nameless)", d.Fields[1].Name)
+	}
+	// both boxes rendered
+	if got := strings.Count(allText(d), "["); got != 2 {
+		t.Errorf("box count = %d, want 2:\n%s", got, allText(d))
+	}
+}
+
+func TestFieldBoxRendering(t *testing.T) {
+	// padded: value shorter than box width
+	d := doc(t, `<form><input type="text" name="q" size="5" value="ab"></form>`, 60)
+	if !strings.Contains(allText(d), "[ab___]") {
+		t.Errorf("padded box missing:\n%s", allText(d))
+	}
+	fl := d.Fields[0]
+	// reverse style inside the box
+	c := d.Lines[fl.Line][fl.Start]
+	if !c.Reverse {
+		t.Error("box cell not reverse-video")
+	}
+	// hit-test: inside hits, outside misses
+	if idx, ok := d.FieldAt(fl.Line, fl.Start); !ok || idx != 0 {
+		t.Errorf("FieldAt(start) = %d,%v", idx, ok)
+	}
+	if idx, ok := d.FieldAt(fl.Line, fl.End-1); !ok || idx != 0 {
+		t.Errorf("FieldAt(end-1) = %d,%v", idx, ok)
+	}
+	if _, ok := d.FieldAt(fl.Line, fl.End); ok {
+		t.Error("FieldAt(end) should miss (End exclusive)")
+	}
+	if fl.Start > 0 {
+		if _, ok := d.FieldAt(fl.Line, fl.Start-1); ok {
+			t.Error("FieldAt(start-1) should miss")
+		}
+	}
+
+	// long value shows the tail
+	d2 := doc(t, `<form><input type="text" name="q" size="5" value="abcdefgh"></form>`, 60)
+	if !strings.Contains(allText(d2), "[defgh]") {
+		t.Errorf("long value must clip to tail:\n%s", allText(d2))
+	}
+	if d2.Fields[0].Value != "abcdefgh" {
+		t.Errorf("Field.Value = %q, want full value", d2.Fields[0].Value)
+	}
+}
+
+func TestFormValuesPrefill(t *testing.T) {
+	values := FormValues{ValuesKey("https://example.org/search", "q"): "stored"}
+	d := docV(t, `<form action="/search"><input type="search" name="q" value="orig"></form>`, 60, values)
+	if !strings.Contains(allText(d), "stored") {
+		t.Errorf("stored value not rendered:\n%s", allText(d))
+	}
+	if strings.Contains(allText(d), "orig") {
+		t.Errorf("value attr must lose to values map:\n%s", allText(d))
+	}
+	if d.Fields[0].Value != "stored" {
+		t.Errorf("Field.Value = %q, want stored", d.Fields[0].Value)
+	}
+}
+
+func TestPostFormFlagged(t *testing.T) {
+	d := doc(t, `<form action="/go" method="POST"><input type="text" name="q" value="x"></form>`, 60)
+	if len(d.Forms) != 1 {
+		t.Fatalf("forms = %d, want 1", len(d.Forms))
+	}
+	if d.Forms[0].Method != "post" {
+		t.Errorf("method = %q, want post", d.Forms[0].Method)
+	}
+	// fields still extracted and rendered
+	if len(d.Fields) != 1 {
+		t.Fatalf("fields = %d, want 1", len(d.Fields))
+	}
+	if !strings.Contains(allText(d), "[x") {
+		t.Errorf("field box not rendered:\n%s", allText(d))
 	}
 }
 

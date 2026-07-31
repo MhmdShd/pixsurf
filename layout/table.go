@@ -96,7 +96,7 @@ func rowCells(tr *dom.Node) []*dom.Node {
 // miniLayout renders one node's subtree into a fresh narrow Document.
 func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 	sub := &Document{Anchors: map[string]int{}}
-	mw := &walker{doc: sub, src: w.src, width: width, images: w.images, linkOpen: -1}
+	mw := &walker{doc: sub, src: w.src, width: width, images: w.images, values: w.values, linkOpen: -1, formIdx: -1}
 	mw.linkURL = w.linkURL // an <a> wrapping the table keeps its links inside
 	mw.renderNode(n, st)
 	mw.flushLine()
