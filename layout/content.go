@@ -12,6 +12,8 @@ const (
 	minMainText   = 200 // a candidate root needs this much text to win
 	minMainShare  = 0.3 // ...and this share of the body's text
 	maxChromeCull = 0.9 // never skip chrome holding more than this share
+	minFarmLinks  = 10  // a link-farm list has at least this many links
+	farmLinkShare = 0.9 // ...and this share of its text inside links
 )
 
 // contentRoot picks the node the body walk should start from: a <main>
@@ -46,14 +48,63 @@ func isChrome(n *dom.Node) bool {
 		return false
 	}
 	switch strings.ToLower(n.Data) {
-	case "nav", "header", "footer", "aside":
+	case "nav", "aside":
 		return true
+	case "header", "footer":
+		// Per the HTML spec, header/footer map to banner/contentinfo
+		// only when not nested in sectioning content; inside
+		// main/article/section they are part of the content.
+		return !inSectioning(n)
 	}
 	switch strings.ToLower(strings.TrimSpace(dom.Attr(n, "role"))) {
 	case "navigation", "banner", "contentinfo", "search":
 		return true
 	}
 	return false
+}
+
+// inSectioning reports whether n has a main/article/section ancestor.
+func inSectioning(n *dom.Node) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Type != dom.ElementNode {
+			continue
+		}
+		switch strings.ToLower(p.Data) {
+		case "main", "article", "section":
+			return true
+		}
+	}
+	return false
+}
+
+// isLinkFarm reports whether a list is pure navigation: many links and
+// essentially all of its text inside them (e.g. a language or menu
+// list). Used only for lists inside kept header/footer elements, where
+// such lists are navigation that lacks nav/role markup.
+func isLinkFarm(n *dom.Node) bool {
+	total := visibleTextLen(n)
+	if total == 0 {
+		return false
+	}
+	links, linkText := linkStats(n)
+	return links >= minFarmLinks && float64(linkText) >= farmLinkShare*float64(total)
+}
+
+// linkStats counts <a> descendants and the visible text inside them.
+func linkStats(n *dom.Node) (links, text int) {
+	var walk func(*dom.Node)
+	walk = func(m *dom.Node) {
+		if m.Type == dom.ElementNode && strings.EqualFold(m.Data, "a") {
+			links++
+			text += visibleTextLen(m)
+			return
+		}
+		for c := m.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return links, text
 }
 
 // chromeSkipSafe reports whether skipping chrome subtrees under root

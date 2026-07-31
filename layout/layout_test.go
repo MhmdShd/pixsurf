@@ -384,6 +384,59 @@ func TestNoOrphanBullets(t *testing.T) {
 	}
 }
 
+func TestHeaderInsideMainKept(t *testing.T) {
+	body := strings.Repeat("long enough article body text to make main the content root ", 5)
+	d := doc(t, `<main><header><h1>The Article Title</h1><p>By Jane</p></header><p>`+body+`</p></main>`, 100)
+	txt := allText(d)
+	for _, want := range []string{"The Article Title", "By Jane", "long enough article body"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("missing %q (header inside main must not be chrome):\n%s", want, txt)
+		}
+	}
+}
+
+func TestLinkFarmInHeaderSkipped(t *testing.T) {
+	var farm strings.Builder
+	for i := 0; i < 12; i++ {
+		farm.WriteString(`<li><a href="/l">FarmLink</a></li>`)
+	}
+	body := strings.Repeat("long enough article body text to make main the content root ", 5)
+	d := doc(t, `<main><header><h1>The Title</h1><p>By Jane</p><ul>`+farm.String()+
+		`</ul></header><p>`+body+`</p></main>`, 100)
+	txt := allText(d)
+	if !strings.Contains(txt, "The Title") || !strings.Contains(txt, "By Jane") {
+		t.Errorf("header content lost:\n%s", txt)
+	}
+	if strings.Contains(txt, "FarmLink") {
+		t.Errorf("link-farm list inside header must be skipped:\n%s", txt)
+	}
+}
+
+func assertNoBareBullets(t *testing.T, d *Document) {
+	t.Helper()
+	for i := range d.Lines {
+		if strings.TrimSpace(lineText(d, i)) == "•" {
+			t.Errorf("line %d is a bare bullet:\n%s", i, allText(d))
+		}
+	}
+}
+
+func TestNoOrphanBulletsDeepWrap(t *testing.T) {
+	d := doc(t, "<ul><li><div><div>alpha</div></div></li></ul>", 40)
+	if !strings.Contains(allText(d), "• alpha") {
+		t.Errorf("doubly wrapped block must join bullet:\n%s", allText(d))
+	}
+	assertNoBareBullets(t, d)
+}
+
+func TestNoOrphanBulletNestedList(t *testing.T) {
+	d := doc(t, "<ul><li><ul><li>sub</li></ul></li></ul>", 40)
+	if !strings.Contains(allText(d), "sub") {
+		t.Errorf("nested list content missing:\n%s", allText(d))
+	}
+	assertNoBareBullets(t, d)
+}
+
 func TestNestedBlocksSingleBlank(t *testing.T) {
 	d := doc(t, "<div><div><div><p>a</p></div></div></div><p>b</p>", 40)
 	if got, want := allText(d), "a\n\nb"; got != want {

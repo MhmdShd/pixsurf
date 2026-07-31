@@ -99,6 +99,7 @@ func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 	mw := &walker{doc: sub, src: w.src, width: width, images: w.images, values: w.values, linkOpen: -1, formIdx: -1}
 	mw.linkURL = w.linkURL // an <a> wrapping the table keeps its links inside
 	mw.skipChrome = w.skipChrome
+	mw.hfDepth = w.hfDepth
 	mw.renderNode(n, st)
 	mw.flushLine()
 	return sub
@@ -127,7 +128,6 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 		w.doc.Lines = append(w.doc.Lines, nil)
 	}
 	w.pendingBlank = false
-	w.contentSince = true // row lines are appended below
 	rowBase := len(w.doc.Lines)
 
 	xoffs := make([]int, len(subs))
@@ -204,7 +204,14 @@ func (w *walker) emitRow(subs []*Document, colWidth, height int) {
 				if kept < 0 {
 					kept = 0
 				}
-				w.doc.Anchors[id] = rowBase + kept
+				at := rowBase + kept
+				if at >= len(w.doc.Lines) { // every merged line dropped
+					at = len(w.doc.Lines) - 1
+				}
+				if at < 0 {
+					at = 0
+				}
+				w.doc.Anchors[id] = at
 			}
 		}
 	}

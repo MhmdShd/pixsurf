@@ -96,9 +96,9 @@ type walker struct {
 
 	pendingBlank  bool // emit one blank line before the next content
 	pendingSpace  bool // a collapsed space is owed before the next word
-	contentSince  bool // content emitted since a blank separator last materialized
-	joinNextBlock bool // suppress the next blockStart break (li bullet joining)
+	joinNextBlock bool // bullet-join window: the line still holds only an <li> marker
 	skipChrome    bool // skip nav/header/footer/aside subtrees
+	hfDepth       int  // nesting depth inside kept header/footer elements
 
 	pre   bool // inside <pre>: verbatim text, no wrap
 	quote int  // blockquote nesting depth (2 cols each)
@@ -169,21 +169,30 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.quote--
 		w.blockEnd()
 	case tag == "ul" || tag == "ol":
+		if w.skipChrome && w.hfDepth > 0 && isLinkFarm(n) {
+			return // nav-list inside a kept header/footer (no nav markup)
+		}
 		nested := len(w.lists) > 0
-		w.flushLine()
-		if !nested {
-			w.pendingBlank = true
+		if !w.joinNextBlock { // a list opening on a bare bullet line joins it
+			w.flushLine()
+			if !nested {
+				w.pendingBlank = true
+			}
 		}
 		w.recordAnchor(n)
 		w.lists = append(w.lists, listFrame{ordered: tag == "ol"})
 		w.walkChildren(n, st)
 		w.lists = w.lists[:len(w.lists)-1]
-		w.flushLine()
-		if !nested {
-			w.pendingBlank = true
+		if !w.joinNextBlock { // empty list on a bare bullet line: keep it open
+			w.flushLine()
+			if !nested {
+				w.pendingBlank = true
+			}
 		}
 	case tag == "li":
-		w.flushLine()
+		if !w.joinNextBlock { // nested item on a bare bullet line joins it
+			w.flushLine()
+		}
 		w.recordAnchor(n)
 		depth := len(w.lists)
 		marker := "• "
@@ -253,10 +262,17 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		}
 		w.flushLine()
 	case blockTags[tag]:
+		hf := tag == "header" || tag == "footer"
+		if hf {
+			w.hfDepth++
+		}
 		w.blockStart()
 		w.recordAnchor(n)
 		w.walkChildren(n, st)
 		w.blockEnd()
+		if hf {
+			w.hfDepth--
+		}
 	default: // inline or unknown: flow children in place
 		w.recordAnchor(n)
 		w.walkChildren(n, st)
@@ -294,23 +310,22 @@ func (w *walker) upcomingLine() int {
 }
 
 // blockStart breaks the line before a block and requests a blank
-// separator — but only when content has actually been emitted since the
-// last separator, so nested wrapper containers don't stack separators.
-// Inside an <li>, the first block child instead joins the bullet line.
+// separator. While the bullet-join window is open — an <li> line still
+// holding only its marker — the break is suppressed at any wrapper
+// depth so the first real content joins the bullet line; emitWord
+// closes the window.
 func (w *walker) blockStart() {
 	if w.joinNextBlock {
-		w.joinNextBlock = false
 		return
 	}
 	w.flushLine()
-	if w.contentSince {
-		w.pendingBlank = true
-	}
+	w.pendingBlank = true
 }
 
 func (w *walker) blockEnd() {
-	w.flushLine()
-	if w.contentSince {
-		w.pendingBlank = true
+	if w.joinNextBlock {
+		return // nothing after the marker yet (empty block): keep joining
 	}
+	w.flushLine()
+	w.pendingBlank = true
 }

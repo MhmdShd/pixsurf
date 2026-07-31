@@ -123,7 +123,6 @@ func (w *walker) startLine() {
 		w.doc.Lines = append(w.doc.Lines, nil)
 	}
 	w.pendingBlank = false
-	w.contentSince = true // a content line is beginning
 	w.started = true
 	for i := 0; i < w.indentCols(); i++ {
 		w.line = append(w.line, cell.Cell{Rune: ' ', Dim: true})
