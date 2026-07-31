@@ -19,6 +19,12 @@ That's it.
 
 ## Install
 
+**Prebuilt binary (recommended):** grab the archive for your OS/arch from the
+[latest release](https://github.com/MhmdShd/pixsurf/releases/latest), unpack,
+and put `pixsurf` on your PATH. Linux, macOS, and Windows, amd64 + arm64.
+
+**With Go:**
+
 ```sh
 go install github.com/MhmdShd/pixsurf@latest
 ```
