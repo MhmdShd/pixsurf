@@ -32,7 +32,7 @@ func main() {
 	}
 	defer u.Close()
 
-	a := &app{u: u, client: fetch.New(), noImages: *noImages, arrivals: make(chan int, 64)}
+	a := &app{u: u, client: fetch.New(), noImages: *noImages, arrivals: make(chan int, imageJobsCap)}
 	a.cols, a.rows = u.GridSize()
 	a.navigate(startURL, true)
 	a.run()

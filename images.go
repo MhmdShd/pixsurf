@@ -77,6 +77,7 @@ func (c *imageCache) store(u string, img image.Image) bool {
 		return false
 	}
 	c.images[u] = img
+	delete(c.requested, u) // it now counts as stored, not outstanding
 	return true
 }
 
@@ -100,7 +101,7 @@ func imageWorker(ctx context.Context, client *fetch.Client, cache *imageCache,
 			if !ok {
 				return
 			}
-			img, err := client.Image(u)
+			img, err := client.Image(ctx, u)
 			if err != nil || img == nil {
 				continue
 			}

@@ -3,6 +3,7 @@ package fetch
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -43,8 +44,8 @@ func New() *Client {
 // get performs the request. No host allow-list by design: this is
 // user-driven browser semantics, so localhost/internal URLs are fetched
 // like any other host (accepted risk).
-func (c *Client) get(hc *http.Client, rawURL string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", rawURL, nil)
+func (c *Client) get(ctx context.Context, hc *http.Client, rawURL string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +64,7 @@ func (c *Client) get(hc *http.Client, rawURL string) (*http.Response, error) {
 // Page fetches a page, decodes it to UTF-8, and caps it at 5MB.
 // finalURL is the URL after redirects (base for relative resolution).
 func (c *Client) Page(rawURL string) (body, finalURL string, truncated bool, err error) {
-	resp, err := c.get(c.hc, rawURL)
+	resp, err := c.get(context.Background(), c.hc, rawURL)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -85,8 +86,10 @@ func (c *Client) Page(rawURL string) (body, finalURL string, truncated bool, err
 }
 
 // Image fetches and decodes an image (png/jpeg/gif/webp), capped at 2MB.
-func (c *Client) Image(rawURL string) (image.Image, error) {
-	resp, err := c.get(c.imgHC, rawURL)
+// Canceling ctx aborts an in-flight request, so callers can abandon images
+// for a page the user has navigated away from.
+func (c *Client) Image(ctx context.Context, rawURL string) (image.Image, error) {
+	resp, err := c.get(ctx, c.imgHC, rawURL)
 	if err != nil {
 		return nil, err
 	}

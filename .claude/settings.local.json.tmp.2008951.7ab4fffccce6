@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gofmt -w /home/Projects/terminalbrowser/main.go /home/Projects/terminalbrowser/images.go /home/Projects/terminalbrowser/images_test.go)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(go test *)",
+      "Bash(gofmt -l .)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'feat: async image loading with per-page cache and debounced redraw *)",
+      "Bash(sed -i 's|^import \\(|import \\(\\\\n\\\\t\"context\"|' fetch/fetch.go)",
+      "Bash(sed -i 's|c\\\\.Image\\(srv\\\\.URL\\)|c.Image\\(context.Background\\(\\), srv.URL\\)|g' fetch/fetch_test.go)",
+      "Bash(sed -i 's|^import \\(|import \\(\\\\n\\\\t\"context\"|' fetch/fetch_test.go)",
+      "Bash(sed -i 's|client\\\\.Image\\(u\\)|client.Image\\(ctx, u\\)|' images.go)",
+      "Bash(gofmt -w fetch/fetch.go fetch/fetch_test.go)",
+      "Bash(git commit -q -m 'fix: context-aware image fetch, cap accounting, arrivals buffer constant *)"
+    ]
+  }
+}

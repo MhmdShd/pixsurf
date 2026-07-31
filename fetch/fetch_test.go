@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -111,7 +112,7 @@ func TestImageCap(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New()
-	if _, err := c.Image(srv.URL); err == nil {
+	if _, err := c.Image(context.Background(), srv.URL); err == nil {
 		t.Error("want error for 3MB image, got nil")
 	}
 }
@@ -131,7 +132,7 @@ func TestImageDecodeSuccess(t *testing.T) {
 	defer srv.Close()
 
 	c := New()
-	got, err := c.Image(srv.URL)
+	got, err := c.Image(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
