@@ -135,18 +135,46 @@ func (w *walker) emitButton(n *dom.Node, st style.Style) {
 	w.emitSubmit(label, st)
 }
 
-// emitFieldBox draws a reverse-video [value_____] box and records the
-// field with its hit-testable region. The values map (via ValuesKey)
-// wins over the value attribute; a too-long value shows its tail.
+// emitFieldBox draws the box for one text-style <input>. The values map
+// (via ValuesKey) wins over the value attribute.
 func (w *walker) emitFieldBox(n *dom.Node, name string, st style.Style) {
 	form := &w.doc.Forms[w.formIdx]
 	val := dom.Attr(n, "value")
 	if v, ok := w.values[ValuesKey(form.Action, name)]; ok {
 		val = v
 	}
+	w.emitFieldValueBox(name, val, w.boxWidth(n, "size"), st)
+}
 
+// emitTextarea renders a <textarea> as a single-line field box: visible,
+// clickable, fillable, and submitted like a text input (no multi-line
+// editing in v0.5). Its initial value is its text content, which is
+// consumed here and never re-emitted as page text. Textareas outside any
+// <form> are skipped, matching emitInput.
+func (w *walker) emitTextarea(n *dom.Node, st style.Style) {
+	if w.formIdx < 0 {
+		return
+	}
+	name := dom.Attr(n, "name")
+	var b strings.Builder
+	dom.Walk(n, func(c *dom.Node) {
+		if c.Type == dom.TextNode {
+			b.WriteString(c.Data)
+		}
+	})
+	val := strings.TrimSpace(b.String())
+	form := &w.doc.Forms[w.formIdx]
+	if v, ok := w.values[ValuesKey(form.Action, name)]; ok {
+		val = v
+	}
+	w.emitFieldValueBox(name, val, w.boxWidth(n, "cols"), st)
+}
+
+// boxWidth resolves a field box's content width from the given attribute
+// (input size / textarea cols), clamped to the line and the global cap.
+func (w *walker) boxWidth(n *dom.Node, attr string) int {
 	boxW := defaultBoxWidth
-	if s := strings.TrimSpace(dom.Attr(n, "size")); s != "" {
+	if s := strings.TrimSpace(dom.Attr(n, attr)); s != "" {
 		if sz, err := strconv.Atoi(s); err == nil && sz > 0 {
 			boxW = sz
 		}
@@ -160,7 +188,12 @@ func (w *walker) emitFieldBox(n *dom.Node, name string, st style.Style) {
 	if boxW < 1 {
 		boxW = 1
 	}
+	return boxW
+}
 
+// emitFieldValueBox draws a reverse-video [value_____] box and records
+// the field with its hit-testable region; a too-long value shows its tail.
+func (w *walker) emitFieldValueBox(name, val string, boxW int, st style.Style) {
 	w.fitRun(boxW+2, st)
 	st.Reverse = true
 	w.putRune('[', st)

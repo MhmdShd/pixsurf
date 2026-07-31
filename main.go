@@ -230,12 +230,21 @@ func (a *app) clampOffset() {
 }
 
 // view returns the visible slice of the document, padded to rows x cols.
+// When the page carries a background, the padding — rows below the
+// document and columns right of short lines — is filled with it so the
+// whole viewport is one sheet; otherwise padding stays terminal default.
 func (a *app) view() [][]cell.Cell {
 	out := make([][]cell.Cell, a.rows)
 	for i := 0; i < a.rows; i++ {
 		out[i] = make([]cell.Cell, a.cols)
+		n := 0
 		if a.doc != nil && a.offset+i < len(a.doc.Lines) {
-			copy(out[i], a.doc.Lines[a.offset+i])
+			n = copy(out[i], a.doc.Lines[a.offset+i])
+		}
+		if a.doc != nil && a.doc.HasPageBg {
+			for j := n; j < a.cols; j++ {
+				out[i][j] = cell.Cell{Rune: ' ', HasBg: true, Bg: a.doc.PageBg}
+			}
 		}
 	}
 	return out

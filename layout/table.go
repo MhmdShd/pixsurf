@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"net/url"
 	"strings"
 
 	"github.com/MhmdShd/pixsurf/cell"
@@ -214,9 +215,20 @@ func rowCells(tr *dom.Node) []*dom.Node {
 }
 
 // miniLayout renders one node's subtree into a fresh narrow Document.
+// A <form> open around the table stays open inside the cell: the cell
+// works against a local copy of it (fresh Hidden map so measuring never
+// double-adds), which emitRow merges back into the page document.
 func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 	sub := &Document{Anchors: map[string]int{}}
 	mw := &walker{doc: sub, src: w.src, width: width, images: w.images, values: w.values, linkOpen: -1, formIdx: -1}
+	if w.formIdx >= 0 {
+		pf := w.doc.Forms[w.formIdx]
+		sub.Forms = append(sub.Forms, Form{
+			Action: pf.Action, Method: pf.Method, Hidden: url.Values{},
+			SubmitLine: -1, SubmitStart: -1, SubmitEnd: -1,
+		})
+		mw.formIdx = 0
+	}
 	mw.linkURL = w.linkURL // an <a> wrapping the table keeps its links inside
 	mw.skipChrome = w.skipChrome
 	mw.hfDepth = w.hfDepth
@@ -247,7 +259,7 @@ func truncCells(line []cell.Cell, max int) []cell.Cell {
 func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.Style) {
 	w.flushLine()
 	if w.pendingBlank && len(w.doc.Lines) > 0 {
-		w.doc.Lines = append(w.doc.Lines, nil)
+		w.appendBlank()
 	}
 	w.pendingBlank = false
 	rowBase := len(w.doc.Lines)
@@ -323,6 +335,44 @@ func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.St
 				URL:   l.URL,
 			})
 		}
+		// Form controls inside this cell belong to the page: forms,
+		// fields, submit regions, and hidden inputs collected by the
+		// cell's mini-layout move into page coordinates here.
+		formMap := make([]int, len(sub.Forms))
+		for si := range sub.Forms {
+			sf := sub.Forms[si]
+			if si == 0 && w.formIdx >= 0 {
+				// the copy of the open form seeded by miniLayout
+				formMap[si] = w.formIdx
+				pf := &w.doc.Forms[w.formIdx]
+				for k, vs := range sf.Hidden {
+					for _, v := range vs {
+						pf.Hidden.Add(k, v)
+					}
+				}
+				if ln, s, e := offsetRegion(sf.SubmitLine, sf.SubmitStart, sf.SubmitEnd,
+					rowBase, newIdx, xoffs[j], widths[j], w.width, height); pf.SubmitLine < 0 && ln >= 0 {
+					pf.SubmitLine, pf.SubmitStart, pf.SubmitEnd = ln, s, e
+				}
+				continue
+			}
+			sf.SubmitLine, sf.SubmitStart, sf.SubmitEnd = offsetRegion(
+				sf.SubmitLine, sf.SubmitStart, sf.SubmitEnd,
+				rowBase, newIdx, xoffs[j], widths[j], w.width, height)
+			w.doc.Forms = append(w.doc.Forms, sf)
+			formMap[si] = len(w.doc.Forms) - 1
+		}
+		for _, f := range sub.Fields {
+			ln, s, e := offsetRegion(f.Line, f.Start, f.End,
+				rowBase, newIdx, xoffs[j], widths[j], w.width, height)
+			if ln < 0 {
+				continue // line dropped or box clipped entirely
+			}
+			f.Line, f.Start, f.End = ln, s, e
+			f.FormIdx = formMap[f.FormIdx]
+			w.doc.Fields = append(w.doc.Fields, f)
+		}
+
 		for id, ln := range sub.Anchors {
 			if _, ok := w.doc.Anchors[id]; !ok {
 				if ln >= height {
@@ -346,6 +396,30 @@ func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.St
 			}
 		}
 	}
+}
+
+// offsetRegion maps a (line, start, end) region from cell-local to page
+// coordinates, clipping to the page width and the cell's own column like
+// link ranges. It returns -1s when the region is unset, its line was
+// dropped, or the box was clipped away entirely.
+func offsetRegion(line, start, end, rowBase int, newIdx []int, xoff, colW, width, height int) (int, int, int) {
+	if line < 0 || line >= height || newIdx[line] < 0 {
+		return -1, -1, -1
+	}
+	start, end = start+xoff, end+xoff
+	if start >= width {
+		return -1, -1, -1
+	}
+	if end > width {
+		end = width
+	}
+	if s := xoff + colW; end > s {
+		end = s
+	}
+	if end <= start {
+		return -1, -1, -1
+	}
+	return rowBase + newIdx[line], start, end
 }
 
 // emptyCells reports whether a merged row line shows nothing (only

@@ -25,6 +25,11 @@ type Document struct {
 	Title   string
 	Forms   []Form
 	Fields  []Field
+
+	// Page background from the <body> (or <html>) element's bgcolor
+	// attribute or inline style; the viewport paints it edge to edge.
+	PageBg    cell.RGB
+	HasPageBg bool
 }
 
 // ImageFetcher loads an image by absolute URL; nil disables images.
@@ -48,12 +53,47 @@ func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues) *Docu
 	}
 	out := &Document{Anchors: map[string]int{}}
 	out.Title = findTitle(d.Root)
+	out.PageBg, out.HasPageBg = pageBackground(d)
 	root := contentRoot(d)
 	w := &walker{doc: out, src: d, width: width, images: images, values: values, linkOpen: -1, formIdx: -1}
 	w.skipChrome = chromeSkipSafe(root)
-	w.renderNode(root, style.Style{})
+	rootSt := style.Style{}
+	if out.HasPageBg {
+		// seed the walk with the page background so every content line is
+		// painted even when the content root is below <body>
+		rootSt.HasBg, rootSt.Bg = true, out.PageBg
+	}
+	w.renderNode(root, rootSt)
 	w.flushLine()
 	return out
+}
+
+// pageBackground extracts the page's sheet color from the <body> (or
+// <html>) element: the legacy bgcolor attribute or an inline style
+// background(-color) declaration.
+func pageBackground(d *dom.Doc) (cell.RGB, bool) {
+	for _, tag := range []string{"body", "html"} {
+		n := findElement(d.Root, tag)
+		if n == nil {
+			continue
+		}
+		if c, ok := style.ParseColor(dom.Attr(n, "bgcolor")); ok {
+			return c, true
+		}
+		for _, decl := range strings.Split(dom.Attr(n, "style"), ";") {
+			k, v, ok := strings.Cut(decl, ":")
+			if !ok {
+				continue
+			}
+			switch strings.TrimSpace(strings.ToLower(k)) {
+			case "background-color", "background":
+				if c, ok := style.ParseColor(v); ok {
+					return c, true
+				}
+			}
+		}
+	}
+	return cell.RGB{}, false
 }
 
 // findTitle extracts the first <title>'s text; the body walk skips it.
@@ -238,6 +278,11 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 	case tag == "button":
 		w.recordAnchor(n)
 		w.emitButton(n, st)
+	case tag == "textarea":
+		// consumes its text content as the field value; children are
+		// deliberately not walked so the content never renders as page text
+		w.recordAnchor(n)
+		w.emitTextarea(n, st)
 	case tag == "table":
 		w.renderTable(n, st)
 	case tag == "img":

@@ -696,6 +696,133 @@ func TestNestedBackgroundInherits(t *testing.T) {
 	}
 }
 
+func TestTextareaRendersAsField(t *testing.T) {
+	d := doc(t, `<form action="/s"><textarea name="q">hello</textarea></form>`, 60)
+	if len(d.Fields) != 1 {
+		t.Fatalf("fields = %d, want 1", len(d.Fields))
+	}
+	fl := d.Fields[0]
+	if fl.Name != "q" || fl.Value != "hello" || fl.FormIdx != 0 {
+		t.Errorf("field = %+v, want name q value hello", fl)
+	}
+	if idx, ok := d.FieldAt(fl.Line, fl.Start); !ok || idx != 0 {
+		t.Errorf("FieldAt(start) = %d,%v", idx, ok)
+	}
+	if idx, ok := d.FieldAt(fl.Line, fl.End-1); !ok || idx != 0 {
+		t.Errorf("FieldAt(end-1) = %d,%v", idx, ok)
+	}
+	if _, ok := d.FieldAt(fl.Line, fl.End); ok {
+		t.Error("FieldAt(end) should miss (End exclusive)")
+	}
+	// the content shows once inside the box and never again as page text
+	if got := strings.Count(allText(d), "hello"); got != 1 {
+		t.Errorf("%q appears %d times, want exactly 1 (inside the box):\n%s", "hello", got, allText(d))
+	}
+	if !strings.Contains(allText(d), "[hello") {
+		t.Errorf("textarea box missing:\n%s", allText(d))
+	}
+	if !d.Lines[fl.Line][fl.Start].Reverse {
+		t.Error("box cell not reverse-video")
+	}
+}
+
+func TestTextareaSubmits(t *testing.T) {
+	values := FormValues{ValuesKey("https://example.org/s", "q"): "typed"}
+	d := docV(t, `<form action="/s"><textarea name="q" cols="8">hello</textarea></form>`, 60, values)
+	if len(d.Fields) != 1 {
+		t.Fatalf("fields = %d, want 1", len(d.Fields))
+	}
+	if d.Fields[0].Value != "typed" {
+		t.Errorf("Field.Value = %q, want values map to win", d.Fields[0].Value)
+	}
+	if !strings.Contains(allText(d), "[typed") {
+		t.Errorf("typed value not shown in box:\n%s", allText(d))
+	}
+	if strings.Contains(allText(d), "hello") {
+		t.Errorf("content value must lose to values map:\n%s", allText(d))
+	}
+}
+
+func TestFormControlsInsideTableCells(t *testing.T) {
+	d := doc(t, `<form action="/s"><table><tr>
+		<td><input type="hidden" name="lang" value="en"><input type="text" name="q" value="cats" size="8"></td>
+		<td><input type="submit" value="Go"></td>
+	</tr></table></form>`, 60)
+	if len(d.Forms) != 1 {
+		t.Fatalf("forms = %d, want 1", len(d.Forms))
+	}
+	f := d.Forms[0]
+	if got := f.Hidden.Get("lang"); got != "en" {
+		t.Errorf("hidden lang = %q, want merged from cell", got)
+	}
+	if len(d.Fields) != 1 {
+		t.Fatalf("fields = %d, want 1 (cell field must reach the page)", len(d.Fields))
+	}
+	fl := d.Fields[0]
+	if fl.Name != "q" || fl.Value != "cats" || fl.FormIdx != 0 {
+		t.Errorf("field = %+v", fl)
+	}
+	if idx, ok := d.FieldAt(fl.Line, fl.Start); !ok || idx != 0 {
+		t.Errorf("FieldAt(start) = %d,%v", idx, ok)
+	}
+	if f.SubmitLine < 0 || f.SubmitEnd <= f.SubmitStart {
+		t.Fatalf("submit region unset: %+v", f)
+	}
+	if idx, ok := d.SubmitAt(f.SubmitLine, f.SubmitStart); !ok || idx != 0 {
+		t.Errorf("SubmitAt(start) = %d,%v", idx, ok)
+	}
+	if !strings.Contains(lineText(d, f.SubmitLine), "[ Go ]") {
+		t.Errorf("submit line = %q, want [ Go ]", lineText(d, f.SubmitLine))
+	}
+}
+
+func TestPageBackgroundCaptured(t *testing.T) {
+	d := doc(t, `<body bgcolor="#ffffff"><p>hi</p></body>`, 20)
+	if !d.HasPageBg {
+		t.Fatal("HasPageBg = false, want true")
+	}
+	if want := (cell.RGB{R: 255, G: 255, B: 255}); d.PageBg != want {
+		t.Errorf("PageBg = %v, want %v", d.PageBg, want)
+	}
+}
+
+func TestBlankLinesPaintedWithBackground(t *testing.T) {
+	d := doc(t, `<body bgcolor="#ffffff"><p>one</p><p>two</p></body>`, 20)
+	if len(d.Lines) != 3 {
+		t.Fatalf("lines = %d, want 3 (one, blank, two):\n%s", len(d.Lines), allText(d))
+	}
+	blank := d.Lines[1]
+	if len(blank) != 20 {
+		t.Fatalf("blank separator width = %d, want full content width 20", len(blank))
+	}
+	want := cell.RGB{R: 255, G: 255, B: 255}
+	for i, c := range blank {
+		if !c.HasBg || c.Bg != want {
+			t.Errorf("blank cell %d: HasBg=%v Bg=%v, want HasBg with %v", i, c.HasBg, c.Bg, want)
+		}
+	}
+}
+
+func TestNoPageBackgroundUnchanged(t *testing.T) {
+	d := doc(t, `<p>one</p><p>two</p>`, 20)
+	if d.HasPageBg {
+		t.Error("HasPageBg = true, want false")
+	}
+	if len(d.Lines) != 3 {
+		t.Fatalf("lines = %d, want 3:\n%s", len(d.Lines), allText(d))
+	}
+	if len(d.Lines[1]) != 0 {
+		t.Errorf("blank separator length = %d, want 0 (unpainted)", len(d.Lines[1]))
+	}
+	for i, ln := range d.Lines {
+		for j, c := range ln {
+			if c.HasBg {
+				t.Errorf("line %d cell %d has HasBg, want none", i, j)
+			}
+		}
+	}
+}
+
 func TestTableGuttersCarryBackground(t *testing.T) {
 	d := doc(t, `<div bgcolor="#f6f6ef"><table><tr><td>aa</td><td>bb</td></tr></table></div>`, 20)
 	want := cell.RGB{R: 246, G: 246, B: 239}

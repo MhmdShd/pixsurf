@@ -116,11 +116,32 @@ func (w *walker) putRune(r rune, st style.Style) {
 	w.col += rw
 }
 
+// appendBlank materializes one blank separator line. When the line above
+// ends with a background color — a painted block — the blank is painted
+// full content width with that color so a background sheet has no dark
+// gaps; otherwise it stays a zero-length line exactly as before. Skipped
+// styling while measuring: painting would inflate natural cell widths.
+func (w *walker) appendBlank() {
+	if !w.measuring {
+		prev := w.doc.Lines[len(w.doc.Lines)-1]
+		if n := len(prev); n > 0 && prev[n-1].HasBg {
+			bg := prev[n-1].Bg
+			ln := make([]cell.Cell, w.width)
+			for i := range ln {
+				ln[i] = cell.Cell{Rune: ' ', HasBg: true, Bg: bg}
+			}
+			w.doc.Lines = append(w.doc.Lines, ln)
+			return
+		}
+	}
+	w.doc.Lines = append(w.doc.Lines, nil)
+}
+
 // startLine begins a new output line: materializes a pending blank
 // separator and writes the blockquote indent.
 func (w *walker) startLine() {
 	if w.pendingBlank && len(w.doc.Lines) > 0 {
-		w.doc.Lines = append(w.doc.Lines, nil)
+		w.appendBlank()
 	}
 	w.pendingBlank = false
 	w.started = true
