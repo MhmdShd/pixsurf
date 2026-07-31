@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"time"
 
@@ -49,16 +50,20 @@ type app struct {
 	scale   float64
 	lastErr string
 
+	lastCells [][]render.Cell
+
 	pendingScroll float64
 	scrollTimer   *time.Timer
 }
 
-// resize matches the Chrome viewport to the current terminal grid.
+// resize matches the Chrome viewport to the current terminal grid. It is a
+// no-op if the terminal reports a degenerate size (e.g. mid-resize).
 func (a *app) resize() {
-	a.cols, a.rows = a.u.GridSize()
-	if a.cols < 1 || a.rows < 1 {
+	cols, rows := a.u.GridSize()
+	if cols < 1 || rows < 1 {
 		return
 	}
+	a.cols, a.rows = cols, rows
 	a.scale = pageWidth / float64(a.cols)
 	pageH := int(float64(a.rows*2) * a.scale)
 	if err := a.b.SetViewport(int(pageWidth), pageH); err != nil {
@@ -75,19 +80,37 @@ func (a *app) do(fn func() error) {
 	a.refresh()
 }
 
-// refresh captures a screenshot and redraws the terminal.
+// refresh captures a screenshot and redraws the terminal. On screenshot
+// failure it still redraws (using the last good frame, if any) so the error
+// reaches the status bar instead of leaving a stale screen.
 func (a *app) refresh() {
+	if a.cols < 1 || a.rows < 1 {
+		return
+	}
 	img, err := a.b.Screenshot()
 	if err != nil {
-		a.lastErr = err.Error()
+		if a.lastErr == "" {
+			a.lastErr = err.Error()
+		}
+		cells := a.lastCells
+		if cells == nil {
+			cells = render.ToCells(image.NewRGBA(image.Rect(0, 0, 1, 1)), a.cols, a.rows)
+		}
+		a.u.Draw(cells, "error: "+a.lastErr)
 		return
 	}
 	cells := render.ToCells(img, a.cols, a.rows)
-	status := a.b.CurrentURL() + "   [g:url b:back f:fwd r:reload q:quit]"
+	a.lastCells = cells
+	status := a.normalStatus()
 	if a.lastErr != "" {
 		status = "error: " + a.lastErr
 	}
 	a.u.Draw(cells, status)
+}
+
+// normalStatus builds the default (non-error) status bar text.
+func (a *app) normalStatus() string {
+	return a.b.CurrentURL() + "   [g:url b:back f:fwd r:reload q:quit]"
 }
 
 // queueScroll coalesces rapid scroll keys into one Chrome round-trip.
@@ -95,9 +118,15 @@ func (a *app) queueScroll(dy float64) {
 	a.pendingScroll += dy
 	if a.scrollTimer == nil {
 		a.scrollTimer = time.NewTimer(debounce)
-	} else {
-		a.scrollTimer.Reset(debounce)
+		return
 	}
+	if !a.scrollTimer.Stop() {
+		select {
+		case <-a.scrollTimer.C:
+		default:
+		}
+	}
+	a.scrollTimer.Reset(debounce)
 }
 
 func (a *app) run() {
@@ -109,6 +138,9 @@ func (a *app) run() {
 		select {
 		case ev := <-a.u.Events():
 			if quit := a.handle(ev); quit {
+				if a.scrollTimer != nil {
+					a.scrollTimer.Stop()
+				}
 				return
 			}
 		case <-timerC:
@@ -145,6 +177,15 @@ func (a *app) handle(ev ui.Event) (quit bool) {
 		x, y := render.CellToPage(e.X, e.Y, a.scale)
 		a.do(func() error { return a.b.ClickAt(x, y) })
 	case ui.ResizeEvent:
+		a.lastErr = ""
+		cols, rows := a.u.GridSize()
+		if a.lastCells != nil && cols == a.cols && rows == a.rows {
+			// Grid size is unchanged (e.g. a URL-bar keystroke firing a
+			// redraw request) — skip the SetViewport+Screenshot round-trip
+			// and just repaint the last frame with the current status.
+			a.u.Draw(a.lastCells, a.normalStatus())
+			return false
+		}
 		a.resize()
 		a.refresh()
 	case ui.URLEvent:
