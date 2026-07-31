@@ -40,6 +40,9 @@ func New() *Client {
 	}
 }
 
+// get performs the request. No host allow-list by design: this is
+// user-driven browser semantics, so localhost/internal URLs are fetched
+// like any other host (accepted risk).
 func (c *Client) get(hc *http.Client, rawURL string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {

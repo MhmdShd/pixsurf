@@ -1,7 +1,10 @@
 package fetch
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,5 +113,86 @@ func TestImageCap(t *testing.T) {
 	c := New()
 	if _, err := c.Image(srv.URL); err == nil {
 		t.Error("want error for 3MB image, got nil")
+	}
+}
+
+func TestImageDecodeSuccess(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	pngBytes := buf.Bytes()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(pngBytes)
+	}))
+	defer srv.Close()
+
+	c := New()
+	got, err := c.Image(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("want non-nil image")
+	}
+	b := got.Bounds()
+	if b.Dx() != 4 || b.Dy() != 4 {
+		t.Errorf("bounds = %v, want 4x4", b)
+	}
+}
+
+func TestPageCapBoundary(t *testing.T) {
+	t.Run("exactly at cap", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write(make([]byte, maxPageBytes))
+		}))
+		defer srv.Close()
+		c := New()
+		body, _, truncated, err := c.Page(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if truncated {
+			t.Error("want truncated=false at exactly maxPageBytes")
+		}
+		if len(body) != maxPageBytes {
+			t.Errorf("body len = %d, want %d", len(body), maxPageBytes)
+		}
+	})
+
+	t.Run("one byte over cap", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write(make([]byte, maxPageBytes+1))
+		}))
+		defer srv.Close()
+		c := New()
+		body, _, truncated, err := c.Page(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !truncated {
+			t.Error("want truncated=true for maxPageBytes+1")
+		}
+		if len(body) != maxPageBytes {
+			t.Errorf("body len = %d, want %d", len(body), maxPageBytes)
+		}
+	})
+}
+
+func TestHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	c := New()
+	_, _, _, err := c.Page(srv.URL)
+	if err == nil {
+		t.Fatal("want error for 404 response, got nil")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("err = %q, want it to contain \"404\"", err.Error())
 	}
 }
