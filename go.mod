@@ -7,6 +7,7 @@ toolchain go1.25.12
 require (
 	github.com/chromedp/chromedp v0.13.7
 	github.com/gdamore/tcell/v2 v2.13.10
+	github.com/mattn/go-runewidth v0.0.27
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
 )
@@ -14,6 +15,7 @@ require (
 require (
 	github.com/chromedp/cdproto v0.0.0-20250403032234-65de8f5d025b // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/gdamore/encoding v1.0.1 // indirect
 	github.com/go-json-experiment/json v0.0.0-20250211171154-1ae217ad3535 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
