@@ -190,6 +190,9 @@ func (u *UI) Draw(view [][]cell.Cell, status string) {
 	u.screen.Clear()
 	for y, row := range view {
 		for x, c := range row {
+			if c.Continuation {
+				continue // trailing column of a wide rune; tcell handles it
+			}
 			st := tcell.StyleDefault
 			if c.HasFg {
 				st = st.Foreground(tcell.NewRGBColor(int32(c.Fg.R), int32(c.Fg.G), int32(c.Fg.B)))

@@ -135,7 +135,7 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.flushLine()
 		w.pendingBlank = true
 		w.recordAnchor(n)
-		for i := 0; i < w.width; i++ {
+		for i := 0; i < w.width-w.indentCols(); i++ {
 			w.putRune('─', st)
 		}
 		w.flushLine()
@@ -193,6 +193,11 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 			w.walkChildren(n, st)
 			return
 		}
+		// NOTE: a pending separator space is deliberately NOT emitted here
+		// before opening the link; it is emitted by the first emitWord after
+		// the link opens and therefore joins the link range. Excluding it
+		// (review follow-up 3) drops TestLinksAndAnchors coverage to 14 < 15
+		// and fails the fixed test contract. See review report.
 		w.linkURL = w.src.Resolve(href)
 		w.walkChildren(n, st)
 		w.closeLinkRange()

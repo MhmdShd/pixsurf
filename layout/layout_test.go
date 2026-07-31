@@ -22,6 +22,9 @@ func lineText(d *Document, i int) string {
 	}
 	var b strings.Builder
 	for _, c := range d.Lines[i] {
+		if c.Continuation {
+			continue
+		}
 		if c.Rune != 0 {
 			b.WriteRune(c.Rune)
 		} else {

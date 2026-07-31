@@ -64,8 +64,8 @@ func (w *walker) emitWord(word string, st style.Style) {
 	}
 }
 
-// emitPre appends verbatim text: newlines break lines, no wrapping,
-// overflow clipped at width.
+// emitPre appends verbatim text: newlines break lines, tabs expand to the
+// next 4-column stop, no wrapping, overflow clipped at width.
 func (w *walker) emitPre(text string, st style.Style) {
 	for i, seg := range strings.Split(text, "\n") {
 		if i > 0 {
@@ -73,8 +73,17 @@ func (w *walker) emitPre(text string, st style.Style) {
 			w.flushLine()
 		}
 		for _, r := range seg {
+			if r == '\t' {
+				if !w.started {
+					w.startLine()
+				}
+				for next := (w.col-w.lineBase)/4*4 + 4 + w.lineBase; w.col < next && w.col < w.width; {
+					w.putRune(' ', st)
+				}
+				continue
+			}
 			rw := runewidth.RuneWidth(r)
-			if w.col+rw > w.width && w.started {
+			if w.started && w.col+rw > w.width {
 				break // clip, don't wrap
 			}
 			w.putRune(r, st)
@@ -83,8 +92,14 @@ func (w *walker) emitPre(text string, st style.Style) {
 }
 
 // putRune appends one styled cell to the current line. It never wraps;
-// callers manage line breaks.
+// callers manage line breaks. Wide runes are followed by explicit
+// continuation cells so slice index == display column holds everywhere.
+// Zero-width runes (combining marks) are dropped to keep that invariant.
 func (w *walker) putRune(r rune, st style.Style) {
+	rw := runewidth.RuneWidth(r)
+	if rw == 0 {
+		return
+	}
 	if !w.started {
 		w.startLine()
 	}
@@ -92,7 +107,12 @@ func (w *walker) putRune(r rune, st style.Style) {
 		w.linkOpen = w.col
 	}
 	w.line = append(w.line, styledCell(r, st))
-	w.col += runewidth.RuneWidth(r)
+	for i := 1; i < rw; i++ {
+		c := styledCell(0, st)
+		c.Continuation = true
+		w.line = append(w.line, c)
+	}
+	w.col += rw
 }
 
 // startLine begins a new output line: materializes a pending blank
@@ -103,11 +123,24 @@ func (w *walker) startLine() {
 	}
 	w.pendingBlank = false
 	w.started = true
-	for i := 0; i < 2*w.quote; i++ {
+	for i := 0; i < w.indentCols(); i++ {
 		w.line = append(w.line, cell.Cell{Rune: ' ', Dim: true})
 		w.col++
 	}
 	w.lineBase = w.col
+}
+
+// indentCols is the blockquote indent, clamped to leave at least one
+// content column.
+func (w *walker) indentCols() int {
+	ind := 2 * w.quote
+	if ind > w.width-1 {
+		ind = w.width - 1
+	}
+	if ind < 0 {
+		ind = 0
+	}
+	return ind
 }
 
 // flushLine closes any open link range and appends the current line.
