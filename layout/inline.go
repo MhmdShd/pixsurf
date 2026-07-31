@@ -150,12 +150,48 @@ func (w *walker) flushLine() {
 		return
 	}
 	w.closeLinkRange()
+	w.fillBackground()
 	w.doc.Lines = append(w.doc.Lines, w.line)
 	w.line = nil
 	w.col = 0
 	w.lineBase = 0
 	w.started = false
 	w.pendingSpace = false
+}
+
+// fillBackground makes a line that carries a background color render as a
+// solid band: leading indent cells take the first content background, and
+// the line is padded out to the content width with the background active
+// at its end. Lines with no background cell are left exactly as built.
+// Skipped while measuring natural cell widths: the padding would make
+// every background line look content-width wide.
+func (w *walker) fillBackground() {
+	if w.measuring {
+		return
+	}
+	first, last := -1, -1
+	for i, c := range w.line {
+		if c.HasBg {
+			if first < 0 {
+				first = i
+			}
+			last = i
+		}
+	}
+	if first < 0 {
+		return
+	}
+	for i := 0; i < first; i++ {
+		if !w.line[i].HasBg {
+			w.line[i].HasBg = true
+			w.line[i].Bg = w.line[first].Bg
+		}
+	}
+	bg := w.line[last].Bg
+	for w.col < w.width {
+		w.line = append(w.line, cell.Cell{Rune: ' ', HasBg: true, Bg: bg})
+		w.col++
+	}
 }
 
 // closeLinkRange records the open link's range on the current line, if any.

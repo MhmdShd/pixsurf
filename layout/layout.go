@@ -100,6 +100,8 @@ type walker struct {
 	skipChrome    bool // skip nav/header/footer/aside subtrees
 	hfDepth       int  // nesting depth inside kept header/footer elements
 
+	measuring bool // natural-width measurement: skip background fill
+
 	pre   bool // inside <pre>: verbatim text, no wrap
 	quote int  // blockquote nesting depth (2 cols each)
 	lists []listFrame

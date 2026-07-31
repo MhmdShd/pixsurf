@@ -67,7 +67,7 @@ func (w *walker) renderTable(n *dom.Node, st style.Style) {
 			}
 		}
 		if height > 0 {
-			w.emitRow(subs, widths, height)
+			w.emitRow(subs, widths, height, st)
 		}
 	}
 	w.blockEnd()
@@ -83,7 +83,9 @@ const defaultImageCols = 3
 func (w *walker) naturalCellWidth(cn *dom.Node, st style.Style) int {
 	saved := w.images
 	w.images = nil // measure with placeholders; must not fetch
+	w.measuring = true
 	sub := w.miniLayout(cn, w.width, st)
+	w.measuring = false
 	w.images = saved
 	widest := 0
 	for _, ln := range sub.Lines {
@@ -218,6 +220,7 @@ func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 	mw.linkURL = w.linkURL // an <a> wrapping the table keeps its links inside
 	mw.skipChrome = w.skipChrome
 	mw.hfDepth = w.hfDepth
+	mw.measuring = w.measuring
 	mw.renderNode(n, st)
 	mw.flushLine()
 	return sub
@@ -239,8 +242,9 @@ func truncCells(line []cell.Cell, max int) []cell.Cell {
 
 // emitRow merges the cells' mini-layouts side by side into output lines,
 // padding short cells and offsetting link ranges and anchors into page
-// coordinates.
-func (w *walker) emitRow(subs []*Document, widths []int, height int) {
+// coordinates. When the table's style carries a background, gutter and
+// padding cells take it so the row renders as a solid band.
+func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.Style) {
 	w.flushLine()
 	if w.pendingBlank && len(w.doc.Lines) > 0 {
 		w.doc.Lines = append(w.doc.Lines, nil)
@@ -262,24 +266,33 @@ func (w *walker) emitRow(subs []*Document, widths []int, height int) {
 	// Merge the cells' lines, dropping merged lines left entirely empty
 	// (cell-internal blank separators and clipped-away content); newIdx
 	// maps a sub line index to its kept output offset within the row.
+	gutter := cell.Cell{Rune: ' '}
+	pad := cell.Cell{}
+	if st.HasBg {
+		gutter.HasBg, gutter.Bg = true, st.Bg
+		pad = gutter
+	}
 	newIdx := make([]int, height)
 	for y := 0; y < height; y++ {
 		line := make([]cell.Cell, 0, total)
 		for j, sub := range subs {
 			if j > 0 {
-				line = append(line, cell.Cell{Rune: ' '})
+				line = append(line, gutter)
 			}
 			if y < len(sub.Lines) {
 				line = append(line, truncCells(sub.Lines[y], widths[j])...)
 			}
 			for len(line) < xoffs[j]+widths[j] {
-				line = append(line, cell.Cell{})
+				line = append(line, pad)
 			}
 		}
 		line = truncCells(line, w.width)
 		if emptyCells(line) {
 			newIdx[y] = -1
 			continue
+		}
+		for st.HasBg && len(line) < w.width {
+			line = append(line, gutter)
 		}
 		newIdx[y] = len(w.doc.Lines) - rowBase
 		w.doc.Lines = append(w.doc.Lines, line)

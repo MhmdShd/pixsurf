@@ -161,7 +161,7 @@ func (w *walker) emitFieldBox(n *dom.Node, name string, st style.Style) {
 		boxW = 1
 	}
 
-	w.fitRun(boxW + 2)
+	w.fitRun(boxW+2, st)
 	st.Reverse = true
 	w.putRune('[', st)
 	line := len(w.doc.Lines)
@@ -192,7 +192,7 @@ func (w *walker) emitSubmit(label string, st style.Style) {
 	form := &w.doc.Forms[w.formIdx]
 	text := "[ " + label + " ]"
 	st.Bold = true
-	w.fitRun(runewidth.StringWidth(text))
+	w.fitRun(runewidth.StringWidth(text), st)
 	line, start := -1, 0
 	for _, r := range text {
 		w.putRune(r, st)
@@ -211,7 +211,7 @@ func (w *walker) emitSubmit(label string, st style.Style) {
 // fitRun handles word-style spacing for an unbreakable run of the given
 // display width: emits the owed separator space and breaks the line when
 // the run would not fit.
-func (w *walker) fitRun(width int) {
+func (w *walker) fitRun(width int, st style.Style) {
 	sp := 0
 	if w.pendingSpace && w.hasContent() {
 		sp = 1
@@ -222,7 +222,9 @@ func (w *walker) fitRun(width int) {
 		sp = 0
 	}
 	if sp == 1 {
-		w.putRune(' ', style.Style{})
+		// the separator space carries only the surrounding background so a
+		// filled block stays solid; other attributes stay off as before
+		w.putRune(' ', style.Style{Bg: st.Bg, HasBg: st.HasBg})
 	}
 }
 

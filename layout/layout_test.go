@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MhmdShd/pixsurf/cell"
 	"github.com/MhmdShd/pixsurf/dom"
 )
 
@@ -589,5 +590,87 @@ func TestImageAttrsDriveSize(t *testing.T) {
 	}
 	if rows < 4 || rows > 6 {
 		t.Errorf("80px-attr image = %d rows, want ~5", rows)
+	}
+}
+
+func TestBackgroundFillsLine(t *testing.T) {
+	d := doc(t, `<div bgcolor="#ff6600">Hi</div>`, 20)
+	if len(d.Lines) == 0 {
+		t.Fatal("no lines")
+	}
+	line := d.Lines[0]
+	if len(line) != 20 {
+		t.Fatalf("line length = %d, want 20", len(line))
+	}
+	want := cell.RGB{R: 255, G: 102, B: 0}
+	for i, c := range line {
+		if !c.HasBg || c.Bg != want {
+			t.Errorf("cell %d: HasBg=%v Bg=%v, want HasBg with %v", i, c.HasBg, c.Bg, want)
+		}
+	}
+	if line[0].Rune != 'H' || line[1].Rune != 'i' {
+		t.Errorf("glyphs = %q %q, want 'H' 'i'", line[0].Rune, line[1].Rune)
+	}
+}
+
+func TestNoBackgroundNoPadding(t *testing.T) {
+	d := doc(t, `<p>Hi</p>`, 20)
+	if len(d.Lines) == 0 {
+		t.Fatal("no lines")
+	}
+	line := d.Lines[0]
+	if len(line) != 2 {
+		t.Fatalf("line length = %d, want 2 (no trailing padding)", len(line))
+	}
+	for i, c := range line {
+		if c.HasBg {
+			t.Errorf("cell %d has HasBg, want none", i)
+		}
+	}
+}
+
+func TestNestedBackgroundInherits(t *testing.T) {
+	d := doc(t, `<div bgcolor="#ff6600"><span>Hi</span></div>`, 20)
+	if len(d.Lines) == 0 {
+		t.Fatal("no lines")
+	}
+	line := d.Lines[0]
+	if len(line) != 20 {
+		t.Fatalf("line length = %d, want 20", len(line))
+	}
+	want := cell.RGB{R: 255, G: 102, B: 0}
+	for i, c := range line {
+		if !c.HasBg || c.Bg != want {
+			t.Errorf("cell %d: HasBg=%v Bg=%v, want outer background %v", i, c.HasBg, c.Bg, want)
+		}
+	}
+}
+
+func TestTableGuttersCarryBackground(t *testing.T) {
+	d := doc(t, `<div bgcolor="#f6f6ef"><table><tr><td>aa</td><td>bb</td></tr></table></div>`, 20)
+	want := cell.RGB{R: 246, G: 246, B: 239}
+	var row []cell.Cell
+	for i := range d.Lines {
+		if strings.Contains(lineText(d, i), "aa") {
+			row = d.Lines[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatal("table row not found")
+	}
+	// gutter is the cell between the two columns: first space after "aa"
+	gut := -1
+	for i, c := range row {
+		if c.Rune == ' ' && i > 0 && row[i-1].Rune == 'a' {
+			gut = i
+			break
+		}
+	}
+	if gut < 0 {
+		t.Fatal("gutter cell not found")
+	}
+	if !row[gut].HasBg || row[gut].Bg != want {
+		t.Errorf("gutter cell: HasBg=%v Bg=%v, want HasBg with %v", row[gut].HasBg, row[gut].Bg, want)
 	}
 }
