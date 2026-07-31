@@ -1,7 +1,6 @@
 package layout
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/MhmdShd/pixsurf/cell"
@@ -74,9 +73,9 @@ func (w *walker) renderTable(n *dom.Node, st style.Style) {
 	w.blockEnd()
 }
 
-// defaultImageCols is the assumed display width of an <img> without a
-// usable width attribute (emitPixels renders ~1 cell per pixel column).
-const defaultImageCols = 24
+// defaultImageCols is the assumed display width, in cells, of an <img>
+// without a usable width attribute (emitPixels renders cellPxW px per cell).
+const defaultImageCols = 3
 
 // naturalCellWidth is the display width a cell's content wants: its
 // longest laid-out line at full width (so wrapping never occurs), with
@@ -97,9 +96,17 @@ func (w *walker) naturalCellWidth(cn *dom.Node, st style.Style) int {
 			if m.Type != dom.ElementNode || !strings.EqualFold(m.Data, "img") {
 				return
 			}
+			aw, hasW := attrInt(m, "width")
+			ah, hasH := attrInt(m, "height")
+			if (hasW && aw <= spacerMaxPx) || (hasH && ah <= spacerMaxPx) {
+				return // spacer: renders nothing
+			}
 			cols := defaultImageCols
-			if v, err := strconv.Atoi(strings.TrimSpace(dom.Attr(m, "width"))); err == nil && v >= 0 {
-				cols = v
+			if hasW && aw > 0 {
+				cols = (aw + cellPxW/2) / cellPxW
+				if cols < 1 {
+					cols = 1
+				}
 			}
 			if cols > w.width {
 				cols = w.width

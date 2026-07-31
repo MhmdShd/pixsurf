@@ -484,3 +484,110 @@ func TestTableManyColumnsClipped(t *testing.T) {
 		}
 	}
 }
+
+// solidImage returns a fetcher serving a solid-color w x h image and a
+// pointer to the list of URLs it was asked for.
+func solidImage(w, h int) (ImageFetcher, *[]string) {
+	var calls []string
+	fetch := func(url string) (image.Image, error) {
+		calls = append(calls, url)
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.Set(x, y, color.RGBA{R: 200, A: 255})
+			}
+		}
+		return img, nil
+	}
+	return fetch, &calls
+}
+
+func renderWith(t *testing.T, src string, width int, fetch ImageFetcher) *Document {
+	t.Helper()
+	d, err := dom.Parse(src, "https://example.org/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Render(d, width, fetch, nil)
+}
+
+func pixelDims(d *Document) (cols, rows int) {
+	for _, ln := range d.Lines {
+		if len(ln) > 0 && ln[0].Rune == '▀' && ln[0].HasFg && ln[0].HasBg {
+			rows++
+			n := 0
+			for _, c := range ln {
+				if c.Rune == '▀' {
+					n++
+				}
+			}
+			if n > cols {
+				cols = n
+			}
+		}
+	}
+	return cols, rows
+}
+
+func TestSpacerImageSkipped(t *testing.T) {
+	fetch, calls := solidImage(14, 1)
+	d := renderWith(t, `<p>a<img src="s.gif" width="14" height="1">b</p>`, 40, fetch)
+	if _, rows := pixelDims(d); rows != 0 {
+		t.Errorf("spacer image emitted %d pixel rows, want 0", rows)
+	}
+	txt := allText(d)
+	if strings.Contains(txt, "[") {
+		t.Errorf("spacer image emitted a placeholder:\n%s", txt)
+	}
+	if !strings.Contains(txt, "ab") {
+		t.Errorf("text around spacer not contiguous, want %q in:\n%s", "ab", txt)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("fetcher was called for spacer image: %v", *calls)
+	}
+}
+
+func TestTinyDecodedImageSkipped(t *testing.T) {
+	fetch, _ := solidImage(2, 2)
+	d := renderWith(t, `<img src="/tiny.png">`, 40, fetch)
+	if cols, rows := pixelDims(d); cols != 0 || rows != 0 {
+		t.Errorf("tiny decoded image emitted %dx%d pixel cells, want none", cols, rows)
+	}
+}
+
+func TestImageSizedLikeBrowser(t *testing.T) {
+	fetch, _ := solidImage(400, 200)
+	d := renderWith(t, `<img src="/big.png">`, 100, fetch)
+	cols, rows := pixelDims(d)
+	if cols < 48 || cols > 52 {
+		t.Errorf("400px-wide image = %d cols, want ~50", cols)
+	}
+	if rows < 10 || rows > 14 {
+		t.Errorf("200px-tall image = %d rows, want ~12", rows)
+	}
+	if rows > 15 {
+		t.Errorf("rows = %d exceeds 15-row cap", rows)
+	}
+
+	fetch, _ = solidImage(20, 20)
+	d = renderWith(t, `<img src="/icon.png">`, 100, fetch)
+	cols, rows = pixelDims(d)
+	if cols < 2 || cols > 3 {
+		t.Errorf("20px icon = %d cols, want 2-3", cols)
+	}
+	if rows < 1 || rows > 2 {
+		t.Errorf("20px icon = %d rows, want 1-2", rows)
+	}
+}
+
+func TestImageAttrsDriveSize(t *testing.T) {
+	fetch, _ := solidImage(800, 800)
+	d := renderWith(t, `<img src="/x.png" width="80" height="80">`, 100, fetch)
+	cols, rows := pixelDims(d)
+	if cols < 8 || cols > 12 {
+		t.Errorf("80px-attr image = %d cols, want ~10 (attrs must win over 800px natural)", cols)
+	}
+	if rows < 4 || rows > 6 {
+		t.Errorf("80px-attr image = %d rows, want ~5", rows)
+	}
+}

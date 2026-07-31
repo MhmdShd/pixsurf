@@ -41,7 +41,7 @@ func TestImageCacheTwoPassRender(t *testing.T) {
 	if len(wanted) != 1 || wanted[0] != "https://x.example/pic.png" {
 		t.Fatalf("wanted = %v, want [https://x.example/pic.png]", wanted)
 	}
-	if !c.store(wanted[0], image.NewRGBA(image.Rect(0, 0, 4, 4))) {
+	if !c.store(wanted[0], image.NewRGBA(image.Rect(0, 0, 16, 16))) {
 		t.Fatal("store rejected under cap")
 	}
 
