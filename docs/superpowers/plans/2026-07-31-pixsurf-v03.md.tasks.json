@@ -1,15 +1,15 @@
 {
   "planPath": "docs/superpowers/plans/2026-07-31-pixsurf-v03.md",
   "tasks": [
-    { "id": 15, "subject": "v0.3 Task 1: layout forms (TDD)", "status": "pending",
+    { "id": 15, "subject": "v0.3 Task 1: layout forms (TDD)", "status": "completed",
       "description": "```json:metadata\n{\"files\": [\"layout/form.go\", \"layout/layout.go\", \"layout/layout_test.go\"], \"verifyCommand\": \"go test ./layout/ -v\"}\n```" },
-    { "id": 16, "subject": "v0.3 Task 2: ui generalized prompt", "status": "pending", "blockedBy": [15],
+    { "id": 16, "subject": "v0.3 Task 2: ui generalized prompt", "status": "completed", "blockedBy": [15],
       "description": "```json:metadata\n{\"files\": [\"ui/ui.go\", \"main.go\"], \"verifyCommand\": \"go build ./... && go vet ./... && go test ./...\"}\n```" },
-    { "id": 17, "subject": "v0.3 Task 3: main forms wiring + anchors (TDD)", "status": "pending", "blockedBy": [15, 16],
+    { "id": 17, "subject": "v0.3 Task 3: main forms wiring + anchors (TDD)", "status": "completed", "blockedBy": [15, 16],
       "description": "```json:metadata\n{\"files\": [\"main.go\", \"submit.go\", \"submit_test.go\"], \"verifyCommand\": \"go test ./... && go build ./... && go vet ./...\"}\n```" },
-    { "id": 18, "subject": "v0.3 Task 4: async images", "status": "pending", "blockedBy": [17],
+    { "id": 18, "subject": "v0.3 Task 4: async images", "status": "completed", "blockedBy": [17],
       "description": "```json:metadata\n{\"files\": [\"images.go\", \"main.go\"], \"verifyCommand\": \"go build ./... && go vet ./... && go test ./... -race\"}\n```" },
-    { "id": 19, "subject": "v0.3 Task 5: README, smoke, ship v0.3.0", "status": "pending", "blockedBy": [18],
+    { "id": 19, "subject": "v0.3 Task 5: README, smoke, ship v0.3.0", "status": "completed", "blockedBy": [18],
       "description": "```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"go run ./smoke\"}\n```" }
   ],
   "lastUpdated": "2026-07-31"
