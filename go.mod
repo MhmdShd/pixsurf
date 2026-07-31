@@ -5,8 +5,10 @@ go 1.25.0
 toolchain go1.25.12
 
 require (
+	github.com/andybalholm/cascadia v1.3.4
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/mattn/go-runewidth v0.0.27
+	github.com/tdewolff/parse/v2 v2.8.14
 	github.com/yuin/goldmark v1.8.5
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
