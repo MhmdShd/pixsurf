@@ -1,15 +1,21 @@
 # pixsurf
 
-Surf the web in pixels — a real web browser inside your terminal.
+Surf the web in your terminal — no browser install, no JavaScript bloat.
 
-pixsurf drives a headless Chrome/Chromium instance and renders live page
-screenshots as truecolor half-block "pixels" in your terminal. Full modern
-web — JavaScript included — no GUI needed.
+pixsurf is a terminal web browser with its own pure-Go rendering engine:
+it fetches pages, lays them out with colors and styles, draws images as
+truecolor half-block pixels, and makes links clickable — all in a single
+static binary. No Chrome, no Chromium, no dependencies. VPS-friendly:
+starts instantly, uses a few dozen MB of RAM.
+
+No JavaScript by design: content sites (news, docs, wikis, blogs) render
+great; app-style sites that require JS will show their static content only.
 
 ## Requirements
 
 - A terminal with truecolor support (most modern terminals)
-- Chrome or Chromium installed
+
+That's it.
 
 ## Install
 
@@ -21,6 +27,7 @@ go install github.com/MhmdShd/pixsurf@latest
 
 ```sh
 pixsurf wikipedia.org
+pixsurf --no-images news.ycombinator.com   # text only, minimal bandwidth
 ```
 
 ## Controls
@@ -29,7 +36,7 @@ pixsurf wikipedia.org
 |-----|--------|
 | ↑ / ↓ | scroll |
 | PgUp / PgDn | scroll a page |
-| mouse click | click links |
+| mouse click | follow link |
 | g | enter a URL |
 | b / f | back / forward |
 | r | reload |
@@ -37,10 +44,10 @@ pixsurf wikipedia.org
 
 ## How it works
 
-Headless Chrome renders the page at 1280px wide → screenshot → downscaled to
-your terminal grid → each character cell becomes two pixels using `▀` with
-24-bit foreground/background colors. Mouse clicks map back from cells to page
-coordinates.
+Pure-Go pipeline: HTTP fetch (capped, cookie-aware) → HTML parse
+(`x/net/html`) → semantic styling → flow layout at your terminal width →
+styled cells drawn with tcell. Images are downscaled to `▀` half-blocks
+with 24-bit color.
 
 ## License
 

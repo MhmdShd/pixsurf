@@ -1,53 +1,28 @@
-// Command pixsurf is a terminal web browser: pages render as colored pixels.
+// Command pixsurf is a terminal web browser with its own pure-Go engine.
 package main
 
 import (
+	"flag"
 	"fmt"
 	"image"
 	"os"
-	"time"
+	"strings"
 
-	"github.com/MhmdShd/pixsurf/browser"
 	"github.com/MhmdShd/pixsurf/cell"
-	"github.com/MhmdShd/pixsurf/render"
+	"github.com/MhmdShd/pixsurf/dom"
+	"github.com/MhmdShd/pixsurf/fetch"
+	"github.com/MhmdShd/pixsurf/layout"
 	"github.com/MhmdShd/pixsurf/ui"
 )
 
-// toCellGrid converts a render.Cell grid to a cell.Cell grid.
-// TEMP shim, removed in v2 Task 7.
-func toCellGrid(cells [][]render.Cell) [][]cell.Cell {
-	out := make([][]cell.Cell, len(cells))
-	for y, row := range cells {
-		out[y] = make([]cell.Cell, len(row))
-		for x, c := range row {
-			out[y][x] = cell.Cell{
-				Rune:  '▀',
-				Fg:    cell.RGB{R: c.Top.R, G: c.Top.G, B: c.Top.B},
-				Bg:    cell.RGB{R: c.Bottom.R, G: c.Bottom.G, B: c.Bottom.B},
-				HasFg: true,
-				HasBg: true,
-			}
-		}
-	}
-	return out
-}
-
-const pageWidth = 1280.0
-const scrollStep = 60.0 // page pixels per arrow key
-const debounce = 50 * time.Millisecond
-
 func main() {
-	startURL := "https://example.com"
-	if len(os.Args) > 1 {
-		startURL = os.Args[1]
-	}
+	noImages := flag.Bool("no-images", false, "skip fetching and rendering images")
+	flag.Parse()
 
-	b, err := browser.New()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	startURL := "https://example.com"
+	if flag.NArg() > 0 {
+		startURL = flag.Arg(0)
 	}
-	defer b.Close()
 
 	u, err := ui.New()
 	if err != nil {
@@ -56,160 +31,218 @@ func main() {
 	}
 	defer u.Close()
 
-	app := &app{b: b, u: u}
-	app.resize()
-	app.do(func() error { return b.Open(startURL) })
-	app.run()
+	a := &app{u: u, client: fetch.New(), noImages: *noImages}
+	a.cols, a.rows = u.GridSize()
+	a.navigate(startURL, true)
+	a.run()
 }
 
 type app struct {
-	b       *browser.Browser
-	u       *ui.UI
-	cols    int
-	rows    int
-	scale   float64
-	lastErr string
+	u        *ui.UI
+	client   *fetch.Client
+	noImages bool
 
-	lastCells [][]render.Cell
+	cols, rows int
+	doc        *layout.Document
+	offset     int
+	url        string
+	lastErr    string
 
-	pendingScroll float64
-	scrollTimer   *time.Timer
+	history []string
+	histPos int // index of current page in history
 }
 
-// resize matches the Chrome viewport to the current terminal grid. It is a
-// no-op if the terminal reports a degenerate size (e.g. mid-resize).
-func (a *app) resize() {
-	cols, rows := a.u.GridSize()
-	if cols < 1 || rows < 1 {
-		return
+func (a *app) fetcher() layout.ImageFetcher {
+	if a.noImages {
+		return nil
 	}
-	a.cols, a.rows = cols, rows
-	a.scale = pageWidth / float64(a.cols)
-	pageH := int(float64(a.rows*2) * a.scale)
-	if err := a.b.SetViewport(int(pageWidth), pageH); err != nil {
-		a.lastErr = err.Error()
-	}
+	return func(u string) (image.Image, error) { return a.client.Image(u) }
 }
 
-// do runs a browser action, records any error, and re-renders.
-func (a *app) do(fn func() error) {
+// load fetches and lays out rawURL, replacing the current document. It does
+// not draw or touch the scroll offset; it reports whether the load succeeded.
+func (a *app) load(rawURL string) bool {
 	a.lastErr = ""
-	if err := fn(); err != nil {
-		a.lastErr = err.Error()
+	target := rawURL
+	if !strings.Contains(target, "://") {
+		target = "https://" + strings.TrimSpace(target)
 	}
-	a.refresh()
+
+	body, finalURL, truncated, err := a.client.Page(target)
+	if err != nil {
+		a.lastErr = err.Error()
+		return false
+	}
+	d, err := dom.Parse(body, finalURL)
+	if err != nil {
+		a.lastErr = err.Error()
+		return false
+	}
+	a.doc = layout.Render(d, a.cols, a.fetcher())
+	a.url = finalURL
+	if truncated {
+		a.lastErr = "page truncated at 5MB"
+	}
+	return true
 }
 
-// refresh captures a screenshot and redraws the terminal. On screenshot
-// failure it still redraws (using the last good frame, if any) so the error
-// reaches the status bar instead of leaving a stale screen.
-func (a *app) refresh() {
-	if a.cols < 1 || a.rows < 1 {
+// navigate fetches and lays out rawURL, scrolls to the top, and draws.
+// push records the page in history (truncating any forward entries).
+func (a *app) navigate(rawURL string, push bool) {
+	if !a.load(rawURL) {
+		a.draw()
 		return
 	}
-	img, err := a.b.Screenshot()
-	if err != nil {
-		if a.lastErr == "" {
-			a.lastErr = err.Error()
+	a.offset = 0
+	if push {
+		if len(a.history) == 0 {
+			a.history = []string{a.url}
+		} else {
+			a.history = append(a.history[:a.histPos+1], a.url)
 		}
-		cells := a.lastCells
-		if cells == nil {
-			cells = render.ToCells(image.NewRGBA(image.Rect(0, 0, 1, 1)), a.cols, a.rows)
-		}
-		a.u.Draw(toCellGrid(cells), "error: "+a.lastErr)
+		a.histPos = len(a.history) - 1
+	}
+	a.draw()
+}
+
+// relayout re-flows the current document at the current width, keeping the
+// scroll position proportionally. Reflow requires the parsed DOM; simplest
+// correct path is a re-fetch of the current URL — cheap pages, local net
+// cost accepted for v2.
+func (a *app) relayout() {
+	if a.doc == nil {
 		return
 	}
-	cells := render.ToCells(img, a.cols, a.rows)
-	a.lastCells = cells
-	status := a.normalStatus()
+	ratio := 0.0
+	if len(a.doc.Lines) > 0 {
+		ratio = float64(a.offset) / float64(len(a.doc.Lines))
+	}
+	if a.load(a.url) {
+		a.offset = int(ratio * float64(len(a.doc.Lines)))
+	}
+	a.clampOffset()
+	a.draw()
+}
+
+func (a *app) clampOffset() {
+	max := 0
+	if a.doc != nil {
+		max = len(a.doc.Lines) - a.rows
+	}
+	if max < 0 {
+		max = 0
+	}
+	if a.offset > max {
+		a.offset = max
+	}
+	if a.offset < 0 {
+		a.offset = 0
+	}
+}
+
+// view returns the visible slice of the document, padded to rows x cols.
+func (a *app) view() [][]cell.Cell {
+	out := make([][]cell.Cell, a.rows)
+	for i := 0; i < a.rows; i++ {
+		out[i] = make([]cell.Cell, a.cols)
+		if a.doc != nil && a.offset+i < len(a.doc.Lines) {
+			copy(out[i], a.doc.Lines[a.offset+i])
+		}
+	}
+	return out
+}
+
+func (a *app) draw() {
+	status := a.url + "   [g:url b:back f:fwd r:reload q:quit]"
 	if a.lastErr != "" {
 		status = "error: " + a.lastErr
 	}
-	a.u.Draw(toCellGrid(cells), status)
+	a.u.Draw(a.view(), status)
 }
 
-// normalStatus builds the default (non-error) status bar text.
-func (a *app) normalStatus() string {
-	return a.b.CurrentURL() + "   [g:url b:back f:fwd r:reload q:quit]"
+func (a *app) scroll(dy int) {
+	a.offset += dy
+	a.clampOffset()
+	a.draw()
 }
 
-// queueScroll coalesces rapid scroll keys into one Chrome round-trip.
-func (a *app) queueScroll(dy float64) {
-	a.pendingScroll += dy
-	if a.scrollTimer == nil {
-		a.scrollTimer = time.NewTimer(debounce)
+func (a *app) click(x, y int) {
+	if a.doc == nil {
 		return
 	}
-	if !a.scrollTimer.Stop() {
-		select {
-		case <-a.scrollTimer.C:
-		default:
-		}
+	href, ok := a.doc.LinkAt(a.offset+y, x)
+	if !ok {
+		return
 	}
-	a.scrollTimer.Reset(debounce)
+	switch {
+	case strings.HasPrefix(href, "mailto:"), strings.HasPrefix(href, "javascript:"):
+		a.lastErr = "unsupported link: " + href
+		a.draw()
+	case strings.Contains(href, "#") && strings.Split(href, "#")[0] == strings.Split(a.url, "#")[0]:
+		frag := strings.SplitN(href, "#", 2)[1]
+		if ln, ok := a.doc.Anchors[frag]; ok {
+			a.offset = ln
+			a.clampOffset()
+		} else {
+			a.lastErr = "anchor not found: #" + frag
+		}
+		a.draw()
+	default:
+		a.navigate(href, true)
+	}
+}
+
+func (a *app) back() {
+	if a.histPos > 0 {
+		a.histPos--
+		a.navigate(a.history[a.histPos], false)
+	}
+}
+
+func (a *app) forward() {
+	if a.histPos < len(a.history)-1 {
+		a.histPos++
+		a.navigate(a.history[a.histPos], false)
+	}
 }
 
 func (a *app) run() {
-	for {
-		var timerC <-chan time.Time
-		if a.scrollTimer != nil {
-			timerC = a.scrollTimer.C
-		}
-		select {
-		case ev := <-a.u.Events():
-			if quit := a.handle(ev); quit {
-				if a.scrollTimer != nil {
-					a.scrollTimer.Stop()
-				}
+	for ev := range a.u.Events() {
+		switch e := ev.(type) {
+		case ui.ActionEvent:
+			switch e.Kind {
+			case ui.Quit:
 				return
+			case ui.ScrollUp:
+				a.scroll(-1)
+			case ui.ScrollDown:
+				a.scroll(1)
+			case ui.PageUp:
+				a.scroll(-(a.rows - 1))
+			case ui.PageDown:
+				a.scroll(a.rows - 1)
+			case ui.Back:
+				a.back()
+			case ui.Forward:
+				a.forward()
+			case ui.Reload:
+				a.navigate(a.url, false)
 			}
-		case <-timerC:
-			dy := a.pendingScroll
-			a.pendingScroll = 0
-			a.scrollTimer = nil
-			a.do(func() error { return a.b.ScrollBy(dy) })
+		case ui.ClickEvent:
+			a.click(e.X, e.Y)
+		case ui.ResizeEvent:
+			cols, rows := a.u.GridSize()
+			if cols == a.cols && rows == a.rows {
+				a.draw() // redraw request (URL bar typing)
+				continue
+			}
+			if cols < 1 || rows < 1 {
+				continue
+			}
+			a.cols, a.rows = cols, rows
+			a.relayout()
+		case ui.URLEvent:
+			a.navigate(e.URL, true)
 		}
 	}
-}
-
-func (a *app) handle(ev ui.Event) (quit bool) {
-	switch e := ev.(type) {
-	case ui.ActionEvent:
-		switch e.Kind {
-		case ui.Quit:
-			return true
-		case ui.ScrollUp:
-			a.queueScroll(-scrollStep)
-		case ui.ScrollDown:
-			a.queueScroll(scrollStep)
-		case ui.PageUp:
-			a.queueScroll(-float64(a.rows*2) * a.scale * 0.9)
-		case ui.PageDown:
-			a.queueScroll(float64(a.rows*2) * a.scale * 0.9)
-		case ui.Back:
-			a.do(a.b.Back)
-		case ui.Forward:
-			a.do(a.b.Forward)
-		case ui.Reload:
-			a.do(a.b.Reload)
-		}
-	case ui.ClickEvent:
-		x, y := render.CellToPage(e.X, e.Y, a.scale)
-		a.do(func() error { return a.b.ClickAt(x, y) })
-	case ui.ResizeEvent:
-		a.lastErr = ""
-		cols, rows := a.u.GridSize()
-		if a.lastCells != nil && cols == a.cols && rows == a.rows {
-			// Grid size is unchanged (e.g. a URL-bar keystroke firing a
-			// redraw request) — skip the SetViewport+Screenshot round-trip
-			// and just repaint the last frame with the current status.
-			a.u.Draw(toCellGrid(a.lastCells), a.normalStatus())
-			return false
-		}
-		a.resize()
-		a.refresh()
-	case ui.URLEvent:
-		a.do(func() error { return a.b.Open(e.URL) })
-	}
-	return false
 }
