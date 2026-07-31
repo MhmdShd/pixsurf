@@ -66,7 +66,7 @@ func (w *walker) emitImage(n *dom.Node, st style.Style) {
 			// background in effect so padding and blanks fill with it,
 			// never with the image's own edge colours.
 			w.hasStyleBg, w.styleBg = st.HasBackdrop, st.Backdrop
-			if w.emitPixels(img, dw, dh) {
+			if w.emitPixels(img, dw, dh, st.Align) {
 				return
 			}
 		}
@@ -83,8 +83,11 @@ func (w *walker) emitImage(n *dom.Node, st style.Style) {
 // emitPixels converts img to half-block cells sized like a browser would
 // display it: displayW/displayH are the CSS-px display size, one cell is
 // cellPxW x cellPxH px. Cols clamp to the content width and rows to
-// maxImageRows, preserving aspect ratio when clamping.
-func (w *walker) emitPixels(img image.Image, displayW, displayH int) bool {
+// maxImageRows, preserving aspect ratio when clamping. align is the
+// text alignment in effect at the <img>; each pixel line carries it so
+// flushLine's alignLine shifts the image (and any link range over it)
+// exactly as it shifts text lines.
+func (w *walker) emitPixels(img image.Image, displayW, displayH int, align style.Align) bool {
 	b := img.Bounds()
 	if b.Dx() < 1 || b.Dy() < 1 || displayW < 1 || displayH < 1 {
 		return false
@@ -132,7 +135,7 @@ func (w *walker) emitPixels(img image.Image, displayW, displayH int) bool {
 				Bg:    cell.RGB(pc.Bottom),
 				HasFg: true,
 				HasBg: true,
-			})
+			}, align)
 		}
 		w.flushLine()
 	}
@@ -140,14 +143,18 @@ func (w *walker) emitPixels(img image.Image, displayW, displayH int) bool {
 }
 
 // putCell appends a prebuilt image pixel cell to the current line, keeping
-// the link-range and line-start bookkeeping putRune provides. The line is
-// marked as pixel-bearing so background fill never treats the pixels'
-// incidental colours as a style background.
-func (w *walker) putCell(c cell.Cell) {
+// the link-range, line-start, and alignment bookkeeping putRune provides.
+// The line is marked as pixel-bearing so background fill never treats the
+// pixels' incidental colours as a style background.
+func (w *walker) putCell(c cell.Cell, align style.Align) {
 	if !w.started {
 		w.startLine()
 	}
 	w.linePixels = true
+	w.lineAlign = align
+	if w.alignForce != style.AlignNone {
+		w.lineAlign = w.alignForce
+	}
 	if w.linkURL != "" && w.linkOpen < 0 {
 		w.linkOpen = w.col
 	}

@@ -1490,3 +1490,58 @@ func TestBlockBackgroundStillFillsLine(t *testing.T) {
 		}
 	}
 }
+
+// pixelStart returns the line index and starting column of the first
+// image-pixel line, or (-1, -1) when none exists.
+func pixelStart(d *Document) (line, col int) {
+	for i, ln := range d.Lines {
+		for j, c := range ln {
+			if c.Rune == '▀' && c.HasFg && c.HasBg {
+				return i, j
+			}
+		}
+	}
+	return -1, -1
+}
+
+func TestCentredImageShifts(t *testing.T) {
+	// 272x32 px: 34 cols x 2 rows at 8x16 px per cell.
+	fetch, _ := solidImage(272, 32)
+	d := renderWith(t, `<center><img src="/logo.png"></center>`, 100, fetch)
+	line, col := pixelStart(d)
+	if line < 0 {
+		t.Fatal("no pixel lines rendered")
+	}
+	want := (100 - 34) / 2
+	if col < want-1 || col > want+1 {
+		t.Errorf("centred image starts at column %d, want ~%d", col, want)
+	}
+}
+
+func TestCentredImageLinkShifts(t *testing.T) {
+	fetch, _ := solidImage(272, 32)
+	d := renderWith(t, `<center><a href="/home"><img src="/logo.png"></a></center>`, 100, fetch)
+	line, col := pixelStart(d)
+	if line < 0 {
+		t.Fatal("no pixel lines rendered")
+	}
+	url, ok := d.LinkAt(line, col)
+	if !ok || !strings.HasSuffix(url, "/home") {
+		t.Errorf("LinkAt(%d, %d) = %q, %v; want the image link", line, col, url, ok)
+	}
+	if url, ok := d.LinkAt(line, 0); ok {
+		t.Errorf("LinkAt(%d, 0) = %q; want no link at the left edge", line, url)
+	}
+}
+
+func TestUncentredImageUnchanged(t *testing.T) {
+	fetch, _ := solidImage(272, 32)
+	d := renderWith(t, `<div><img src="/logo.png"></div>`, 100, fetch)
+	line, col := pixelStart(d)
+	if line < 0 {
+		t.Fatal("no pixel lines rendered")
+	}
+	if col != 0 {
+		t.Errorf("unaligned image starts at column %d, want 0", col)
+	}
+}
