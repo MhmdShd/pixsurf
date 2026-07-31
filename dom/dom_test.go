@@ -31,6 +31,16 @@ func TestBaseHref(t *testing.T) {
 	}
 }
 
+func TestFirstBaseWins(t *testing.T) {
+	d, err := Parse(`<base href="https://first.org/a/"><base href="https://second.org/b/">x`, "https://example.org/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Resolve("img"); got != "https://first.org/a/img" {
+		t.Errorf("Resolve = %q, want first base to win", got)
+	}
+}
+
 func TestAttr(t *testing.T) {
 	d, err := Parse(`<img SRC="a.png" alt="pic">`, "https://example.org/")
 	if err != nil {

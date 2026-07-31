@@ -31,11 +31,16 @@ func Parse(src, pageURL string) (*Doc, error) {
 	if err != nil {
 		return nil, err
 	}
+	var baseSet bool
 	Walk(root, func(n *Node) {
+		if baseSet {
+			return
+		}
 		if n.Type == ElementNode && n.Data == "base" {
 			if href := Attr(n, "href"); href != "" {
 				if u, err := base.Parse(href); err == nil {
 					base = u
+					baseSet = true
 				}
 			}
 		}
@@ -44,6 +49,7 @@ func Parse(src, pageURL string) (*Doc, error) {
 }
 
 // Resolve turns a possibly-relative href into an absolute URL string.
+// Not guaranteed to return an absolute URL when href is unparseable (returns input as-is).
 func (d *Doc) Resolve(href string) string {
 	u, err := d.Base.Parse(strings.TrimSpace(href))
 	if err != nil {
