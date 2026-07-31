@@ -26,6 +26,7 @@ const (
 	imageTimeout  = 5 * time.Second
 	maxPageBytes  = 5 << 20
 	maxImageBytes = 2 << 20
+	maxAssetBytes = 512 << 10
 )
 
 // Client is an HTTP session with an in-memory cookie jar.
@@ -98,6 +99,22 @@ func (c *Client) Page(rawURL string) (*Response, error) {
 		out.ContentType = strings.ToLower(mt)
 	}
 	return out, nil
+}
+
+// Asset fetches a text asset such as a stylesheet, capped at 512KB with
+// a 5s timeout. Same session (cookies) as pages. Bodies over the cap are
+// truncated, not rejected: a partial stylesheet still yields usable rules.
+func (c *Client) Asset(rawURL string) (string, error) {
+	resp, err := c.get(context.Background(), c.imgHC, rawURL) // imgHC: the 5s-timeout client
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAssetBytes))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // Image fetches and decodes an image (png/jpeg/gif/webp), capped at 2MB.

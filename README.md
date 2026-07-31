@@ -38,6 +38,13 @@ pixsurf wikipedia.org
 pixsurf --no-images news.ycombinator.com   # text only, minimal bandwidth
 ```
 
+pixsurf reads the page's real CSS: colours, bold/italic/underline and
+`display:none`-hidden elements come from the site's own stylesheets
+(`<style>` blocks plus up to 4 external sheets). Layout geometry —
+flex, grid, floats, positioning — is not reproduced, by design: a
+terminal is a character grid. Pass `--no-css` to skip stylesheets and
+use pixsurf's built-in styles instead.
+
 Site search works: click a search box, type, Enter (GET forms).
 
 Images load asynchronously — pages appear instantly and images fill in.

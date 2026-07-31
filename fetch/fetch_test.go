@@ -199,6 +199,46 @@ func TestPageCapBoundary(t *testing.T) {
 	})
 }
 
+func TestAsset(t *testing.T) {
+	const sheet = "body { color: #333; }\na.link { text-decoration: underline; }"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		fmt.Fprint(w, sheet)
+	}))
+	defer srv.Close()
+	c := New()
+	got, err := c.Asset(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != sheet {
+		t.Errorf("Asset = %q, want %q", got, sheet)
+	}
+}
+
+func TestAssetCap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, maxAssetBytes+4096)) // over the 512KB cap
+	}))
+	defer srv.Close()
+	c := New()
+	got, err := c.Asset(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != maxAssetBytes {
+		t.Errorf("len = %d, want truncation at %d", len(got), maxAssetBytes)
+	}
+}
+
+func TestAssetHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(http.NotFound))
+	defer srv.Close()
+	if _, err := New().Asset(srv.URL); err == nil {
+		t.Error("want error for 404 asset, got nil")
+	}
+}
+
 func TestHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)

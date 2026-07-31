@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MhmdShd/pixsurf/cell"
+	"github.com/MhmdShd/pixsurf/css"
 	"github.com/MhmdShd/pixsurf/dom"
 	"github.com/MhmdShd/pixsurf/fetch"
 	"github.com/MhmdShd/pixsurf/layout"
@@ -19,6 +20,7 @@ import (
 
 func main() {
 	noImages := flag.Bool("no-images", false, "skip fetching and rendering images")
+	noCSS := flag.Bool("no-css", false, "ignore page stylesheets; use built-in styles only")
 	flag.Parse()
 
 	startURL := "https://example.com"
@@ -33,10 +35,69 @@ func main() {
 	}
 	defer u.Close()
 
-	a := &app{u: u, client: fetch.New(), noImages: *noImages, arrivals: make(chan int, imageJobsCap)}
+	a := &app{u: u, client: fetch.New(), noImages: *noImages, noCSS: *noCSS, arrivals: make(chan int, imageJobsCap)}
 	a.cols, a.rows = u.GridSize()
 	a.navigate(startURL, true)
 	a.run()
+}
+
+const (
+	maxExternalSheets = 4               // <link rel=stylesheet> fetch attempts per page
+	sheetBudget       = 8 * time.Second // total wall-clock budget for external sheets
+)
+
+// collectSheets gathers the page's stylesheet texts in document order:
+// every <style> element's text (free, uncapped) and each
+// <link rel="stylesheet"> fetched via client.Asset (max 4 attempts, 8s
+// total). Fetch failures are skipped silently — the page still renders.
+func collectSheets(client *fetch.Client, d *dom.Doc) []string {
+	var sheets []string
+	attempts := 0
+	deadline := time.Now().Add(sheetBudget)
+	dom.Walk(d.Root, func(n *dom.Node) {
+		if n.Type != dom.ElementNode {
+			return
+		}
+		switch n.Data {
+		case "style":
+			var b strings.Builder
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == dom.TextNode {
+					b.WriteString(c.Data)
+				}
+			}
+			sheets = append(sheets, b.String())
+		case "link":
+			if !isStylesheetLink(n) || attempts >= maxExternalSheets || !time.Now().Before(deadline) {
+				return
+			}
+			href := strings.TrimSpace(dom.Attr(n, "href"))
+			if href == "" {
+				return
+			}
+			attempts++
+			if text, err := client.Asset(d.Resolve(href)); err == nil {
+				sheets = append(sheets, text)
+			}
+		}
+	})
+	return sheets
+}
+
+// isStylesheetLink reports whether n is an applied stylesheet link:
+// rel contains the "stylesheet" token (rel is space-separated) and not
+// "alternate" — alternate stylesheets are off by default in browsers.
+func isStylesheetLink(n *dom.Node) bool {
+	found := false
+	for _, tok := range strings.Fields(strings.ToLower(dom.Attr(n, "rel"))) {
+		switch tok {
+		case "stylesheet":
+			found = true
+		case "alternate":
+			return false
+		}
+	}
+	return found
 }
 
 // promptPurpose identifies what an active status-bar prompt is for.
@@ -52,9 +113,11 @@ type app struct {
 	u        *ui.UI
 	client   *fetch.Client
 	noImages bool
+	noCSS    bool
 
 	cols, rows int
-	dom        *dom.Doc // parsed DOM of the current page (re-layout cache)
+	dom        *dom.Doc             // parsed DOM of the current page (re-layout cache)
+	styles     layout.StyleResolver // page CSS engine; nil with --no-css
 	doc        *layout.Document
 	offset     int
 	url        string
@@ -141,9 +204,13 @@ func (a *app) load(rawURL string) bool {
 		return false
 	}
 	a.dom = d
+	a.styles = nil
+	if !a.noCSS {
+		a.styles = css.New(collectSheets(a.client, d))
+	}
 	a.values = nil // new page: previous pages' field values are stale
 	a.resetImages()
-	a.doc = layout.Render(d, a.cols, a.fetcher(), a.values, nil)
+	a.doc = layout.Render(d, a.cols, a.fetcher(), a.values, a.styles)
 	a.spawnFetches()
 	a.url = resp.URL
 	if resp.Truncated {
@@ -192,7 +259,7 @@ func (a *app) relayout() {
 	if a.doc != nil && len(a.doc.Lines) > 0 {
 		ratio = float64(a.offset) / float64(len(a.doc.Lines))
 	}
-	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values, nil)
+	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values, a.styles)
 	a.spawnFetches()
 	a.offset = int(ratio * float64(len(a.doc.Lines)))
 	a.clampOffset()
@@ -207,7 +274,7 @@ func (a *app) imageRelayout() {
 	if a.dom == nil {
 		return
 	}
-	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values, nil)
+	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values, a.styles)
 	a.spawnFetches()
 	a.clampOffset()
 	a.draw()
