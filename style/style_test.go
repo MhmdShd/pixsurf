@@ -58,10 +58,10 @@ func TestTagDefaults(t *testing.T) {
 
 func TestParseColor(t *testing.T) {
 	cases := map[string]cell.RGB{
-		"#fff":    {255, 255, 255},
-		"#002b36": {0, 43, 54},
-		"red":     {255, 0, 0},
-		"navy":    {0, 0, 128},
+		"#fff":    {R: 255, G: 255, B: 255},
+		"#002b36": {R: 0, G: 43, B: 54},
+		"red":     {R: 255, G: 0, B: 0},
+		"navy":    {R: 0, G: 0, B: 128},
 	}
 	for in, want := range cases {
 		got, ok := ParseColor(in)
@@ -77,15 +77,15 @@ func TestParseColor(t *testing.T) {
 func TestApplyInline(t *testing.T) {
 	n := node(t, `<p style="color: red; background-color: #002b36">x</p>`, "p")
 	s := ApplyInline(Style{}, n)
-	if !s.HasFg || s.Fg != (cell.RGB{255, 0, 0}) {
+	if !s.HasFg || s.Fg != (cell.RGB{R: 255, G: 0, B: 0}) {
 		t.Errorf("fg = %+v", s)
 	}
-	if !s.HasBg || s.Bg != (cell.RGB{0, 43, 54}) {
+	if !s.HasBg || s.Bg != (cell.RGB{R: 0, G: 43, B: 54}) {
 		t.Errorf("bg = %+v", s)
 	}
 	legacy := node(t, `<font color="navy">x</font>`, "font")
 	s2 := ApplyInline(Style{}, legacy)
-	if !s2.HasFg || s2.Fg != (cell.RGB{0, 0, 128}) {
+	if !s2.HasFg || s2.Fg != (cell.RGB{R: 0, G: 0, B: 128}) {
 		t.Errorf("legacy color = %+v", s2)
 	}
 }
