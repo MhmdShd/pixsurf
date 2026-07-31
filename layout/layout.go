@@ -30,6 +30,11 @@ type Document struct {
 	// attribute or inline style; the viewport paints it edge to edge.
 	PageBg    cell.RGB
 	HasPageBg bool
+
+	// ContrastFixes counts cells whose declared foreground was replaced
+	// by the contrast safety net because it was too close to the cell's
+	// backdrop to read (see ensureContrast).
+	ContrastFixes int
 }
 
 // ImageFetcher loads an image by absolute URL; nil disables images.
@@ -104,7 +109,12 @@ func resolveChain(n *dom.Node, styles StyleResolver) style.Style {
 
 // cssPageBackground is the page sheet colour per the stylesheet: the
 // computed backdrop of the <body> (or <html>) element. It complements
-// pageBackground, which only sees attributes and inline styles.
+// pageBackground, which only sees attributes and inline styles. When
+// body and html declare no background, sites often paint the sheet on a
+// wrapper element instead (e.g. a page-container div holding all the
+// content), so the search descends from <body> through the chain of
+// dominant wrappers — each holding essentially all of the page's text —
+// and takes the highest one that declares a background.
 func cssPageBackground(d *dom.Doc, styles StyleResolver) (cell.RGB, bool) {
 	for _, tag := range []string{"body", "html"} {
 		n := findElement(d.Root, tag)
@@ -115,7 +125,46 @@ func cssPageBackground(d *dom.Doc, styles StyleResolver) (cell.RGB, bool) {
 			return st.Backdrop, true
 		}
 	}
+	body := findElement(d.Root, "body")
+	if body == nil {
+		body = d.Root
+	}
+	st := resolveChain(body, styles)
+	const maxWrapperDepth = 8
+	for n, depth := body, 0; depth < maxWrapperDepth; depth++ {
+		c := dominantChild(n)
+		if c == nil {
+			break
+		}
+		st = styles.Resolve(c, st)
+		if st.HasBackdrop {
+			return st.Backdrop, true
+		}
+		n = c
+	}
 	return cell.RGB{}, false
+}
+
+// dominantWrapperShare: a child is the page's wrapper when it holds at
+// least this share of its parent's visible text.
+const dominantWrapperShare = 0.9
+
+// dominantChild returns the element child of n holding essentially all
+// of n's visible text — the wrapper pattern — or nil when none does.
+func dominantChild(n *dom.Node) *dom.Node {
+	total := visibleTextLen(n)
+	if total == 0 {
+		return nil
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != dom.ElementNode {
+			continue
+		}
+		if float64(visibleTextLen(c)) >= dominantWrapperShare*float64(total) {
+			return c
+		}
+	}
+	return nil
 }
 
 // pageBackground extracts the page's sheet color from the <body> (or

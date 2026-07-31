@@ -27,7 +27,11 @@ func (w *walker) renderTable(n *dom.Node, st, parentSt style.Style) {
 	w.recordAnchor(n)
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == dom.ElementNode && strings.EqualFold(c.Data, "caption") {
-			w.walkChildren(c, style.ForTag("caption", st))
+			capSt := style.ForTag("caption", st)
+			if w.styles != nil {
+				capSt = w.styles.Resolve(c, st)
+			}
+			w.walkChildren(c, capSt)
 			w.flushLine()
 		}
 	}
@@ -36,17 +40,17 @@ func (w *walker) renderTable(n *dom.Node, st, parentSt style.Style) {
 	// single-cell row does not inflate a narrow label column.
 	widthsByN := map[int][]int{}
 	for _, row := range rows {
-		n := len(row)
-		if n == 0 {
+		cnt := len(row)
+		if cnt == 0 {
 			continue
 		}
-		nat := widthsByN[n]
+		nat := widthsByN[cnt]
 		if nat == nil {
-			nat = make([]int, n)
-			widthsByN[n] = nat
+			nat = make([]int, cnt)
+			widthsByN[cnt] = nat
 		}
 		for j, cn := range row {
-			if v := w.naturalCellWidth(cn, st); v > nat[j] {
+			if v := w.naturalCellWidth(cn, w.cellContext(n, cn, st)); v > nat[j] {
 				nat[j] = v
 			}
 		}
@@ -62,7 +66,7 @@ func (w *walker) renderTable(n *dom.Node, st, parentSt style.Style) {
 		subs := make([]*Document, len(row))
 		height := 0
 		for j, cn := range row {
-			subs[j] = w.miniLayout(cn, widths[j], st)
+			subs[j] = w.miniLayout(cn, widths[j], w.cellContext(n, cn, st))
 			if len(subs[j].Lines) > height {
 				height = len(subs[j].Lines)
 			}
@@ -72,6 +76,31 @@ func (w *walker) renderTable(n *dom.Node, st, parentSt style.Style) {
 		}
 	}
 	w.blockEnd(parentSt)
+}
+
+// cellContext resolves the styles of the elements between the table and
+// one of its cells — tbody/thead/tfoot and, crucially, the <tr> — so a
+// row's own colours (e.g. an inline background on the <tr>) reach the
+// cell's layout. tableRows returns bare td/th nodes, so without this the
+// intermediate elements would never be resolved and their backgrounds
+// silently dropped.
+func (w *walker) cellContext(table, cn *dom.Node, tableSt style.Style) style.Style {
+	var chain []*dom.Node
+	for p := cn.Parent; p != nil && p != table; p = p.Parent {
+		chain = append(chain, p)
+	}
+	st := tableSt
+	for i := len(chain) - 1; i >= 0; i-- {
+		if chain[i].Type != dom.ElementNode {
+			continue
+		}
+		if w.styles != nil {
+			st = w.styles.Resolve(chain[i], st)
+		} else {
+			st = style.ApplyInline(style.ForTag(strings.ToLower(chain[i].Data), st), chain[i])
+		}
+	}
+	return st
 }
 
 // defaultImageCols is the assumed display width, in cells, of an <img>
@@ -312,6 +341,7 @@ func (w *walker) emitRow(subs []*Document, widths []int, height int, st style.St
 	}
 
 	for j, sub := range subs {
+		w.doc.ContrastFixes += sub.ContrastFixes
 		for _, l := range sub.Links {
 			if l.Line >= height || newIdx[l.Line] < 0 {
 				continue // line was dropped: no visible cells to hit

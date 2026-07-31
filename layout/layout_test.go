@@ -1201,3 +1201,99 @@ func TestFieldFallsBackToReverse(t *testing.T) {
 		t.Error("field with backdrop but no foreground must keep reverse fallback")
 	}
 }
+
+func TestPageBackgroundFromWrapperElement(t *testing.T) {
+	// html and body declare nothing; a wrapper div holding all the
+	// content paints the sheet (the Wikipedia .mw-page-container pattern).
+	src := `<body><div class="page-container"><p>alpha beta gamma delta content here</p>` +
+		`<p>more content lines to fill the page</p></div></body>`
+	d := docC(t, src, 40, ".page-container { background-color: #f8f9fa }")
+	if !d.HasPageBg {
+		t.Fatal("HasPageBg = false, want true from wrapper background")
+	}
+	if want := (cell.RGB{R: 0xf8, G: 0xf9, B: 0xfa}); d.PageBg != want {
+		t.Errorf("PageBg = %v, want %v", d.PageBg, want)
+	}
+}
+
+func TestTableCellCaptionKeepsBackdrop(t *testing.T) {
+	// An image row followed by a text row inside a painted table: the
+	// text row's cells must carry the table's backdrop, not terminal
+	// default. The row's own inline background must also reach its cells
+	// even though the <tr> is not walked directly.
+	src := `<table class="box"><tr><td><img src="/x.png" alt="pic"></td></tr>` +
+		`<tr style="background-color: rgb(235,235,210)"><td>Various types of cats</td></tr></table>`
+	d := docC(t, src, 40, ".box { background-color: #f8f9fa }")
+	rowBg := cell.RGB{R: 235, G: 235, B: 210}
+	found := false
+	for i := range d.Lines {
+		if !strings.Contains(lineText(d, i), "Various") {
+			continue
+		}
+		found = true
+		for j, c := range d.Lines[i] {
+			if c.Rune == 0 || c.Rune == ' ' {
+				continue
+			}
+			if !c.HasBg {
+				t.Fatalf("line %d cell %d (%q) has no backdrop, want table/row background", i, j, c.Rune)
+			}
+			if c.Bg != rowBg {
+				t.Errorf("line %d cell %d bg = %v, want row background %v", i, j, c.Bg, rowBg)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("caption text not rendered:\n%s", allText(d))
+	}
+}
+
+func TestContrastSafetyNetDarkOnDark(t *testing.T) {
+	// Dark grey text on a near-black backdrop: the safety net must
+	// lighten the foreground to a readable value.
+	src := `<body><p>invisible text</p></body>`
+	d := docC(t, src, 40, "body { background-color: #101418; color: #202122 }")
+	if len(d.Lines) == 0 {
+		t.Fatal("no lines")
+	}
+	if d.ContrastFixes == 0 {
+		t.Error("ContrastFixes = 0, want the safety net to have fired")
+	}
+	for j, c := range d.Lines[0] {
+		if c.Rune == 0 || c.Rune == ' ' {
+			continue
+		}
+		if !c.HasFg || !c.HasBg {
+			t.Fatalf("cell %d missing fg/bg: %+v", j, c)
+		}
+		diff := relLuminance(c.Fg) - relLuminance(c.Bg)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff < minLumDiff {
+			t.Errorf("cell %d (%q): fg %v on bg %v, luminance diff %.3f < %.2f",
+				j, c.Rune, c.Fg, c.Bg, diff, minLumDiff)
+		}
+	}
+}
+
+func TestContrastSafetyNetLeavesGoodPairsAlone(t *testing.T) {
+	src := `<body><p>readable text</p></body>`
+	d := docC(t, src, 40, "body { background-color: #ffffff; color: #202122 }")
+	if len(d.Lines) == 0 {
+		t.Fatal("no lines")
+	}
+	if d.ContrastFixes != 0 {
+		t.Errorf("ContrastFixes = %d, want 0 for a good pair", d.ContrastFixes)
+	}
+	dark := cell.RGB{R: 0x20, G: 0x21, B: 0x22}
+	white := cell.RGB{R: 255, G: 255, B: 255}
+	for j, c := range d.Lines[0] {
+		if c.Rune == 0 || c.Rune == ' ' {
+			continue
+		}
+		if c.Fg != dark || c.Bg != white {
+			t.Errorf("cell %d = fg %v bg %v, want unchanged dark on white", j, c.Fg, c.Bg)
+		}
+	}
+}

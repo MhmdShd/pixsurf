@@ -10,9 +10,10 @@ import (
 
 // parseColor extends style.ParseColor with the rgb()/rgba() functional
 // forms (alpha ignored), accepting comma-, space- and slash-separated
-// components and percentages.
+// components and percentages. var() references resolve to their
+// fallback value first (see resolveVar).
 func parseColor(v string) (cell.RGB, bool) {
-	v = strings.TrimSpace(v)
+	v = strings.TrimSpace(resolveVar(v))
 	if c, ok := style.ParseColor(v); ok {
 		return c, true
 	}
@@ -50,4 +51,45 @@ func parseColor(v string) (cell.RGB, bool) {
 		out[i] = uint8(f + 0.5)
 	}
 	return cell.RGB{R: out[0], G: out[1], B: out[2]}, true
+}
+
+// resolveVar replaces each var(--name, fallback) reference in v with its
+// fallback value. Custom property definitions are not tracked — sites
+// that matter (e.g. Wikipedia's body{background-color:var(--x,#f8f9fa)})
+// ship literal fallbacks for non-supporting engines, and those are the
+// values a light-theme render wants. A var() without a fallback resolves
+// to nothing, leaving the value unparseable as before. Nested fallbacks
+// resolve up to a small fixed depth.
+func resolveVar(v string) string {
+	for iter := 0; iter < 4; iter++ {
+		i := strings.Index(strings.ToLower(v), "var(")
+		if i < 0 {
+			return v
+		}
+		depth, end, comma := 0, -1, -1
+		for k := i + 3; k < len(v) && end < 0; k++ {
+			switch v[k] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					end = k
+				}
+			case ',':
+				if depth == 1 && comma < 0 {
+					comma = k
+				}
+			}
+		}
+		if end < 0 {
+			return v
+		}
+		fb := ""
+		if comma >= 0 {
+			fb = strings.TrimSpace(v[comma+1 : end])
+		}
+		v = v[:i] + fb + v[end+1:]
+	}
+	return v
 }

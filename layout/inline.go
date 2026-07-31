@@ -127,6 +127,7 @@ func (w *walker) putRune(r rune, st style.Style) {
 	if !w.started {
 		w.startLine()
 	}
+	st = w.ensureContrast(st)
 	w.hasStyleBg, w.styleBg = st.HasBackdrop, st.Backdrop
 	w.lineAlign = st.Align
 	if w.linkURL != "" && w.linkOpen < 0 {
@@ -333,6 +334,52 @@ func (w *walker) closeLinkRange() {
 // hasContent reports whether the current line holds content beyond indent.
 func (w *walker) hasContent() bool {
 	return w.started && w.col > w.lineBase
+}
+
+// minLumDiff is the smallest relative-luminance difference between a
+// glyph's foreground and its backdrop that still counts as readable.
+const minLumDiff = 0.30
+
+// relLuminance is a simple relative luminance in [0,1] (ITU-R BT.709
+// coefficients on 8-bit channels; no gamma — a threshold is all we need).
+func relLuminance(c cell.RGB) float64 {
+	return (0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)) / 255
+}
+
+// readableOn is a guaranteed-readable foreground for a backdrop:
+// near-black on light sheets, near-white on dark ones.
+func readableOn(bg cell.RGB) cell.RGB {
+	if relLuminance(bg) >= 0.5 {
+		return cell.RGB{R: 0x11, G: 0x11, B: 0x11}
+	}
+	return cell.RGB{R: 0xee, G: 0xee, B: 0xee}
+}
+
+// ensureContrast is the final safety net before a glyph cell is built:
+// no text may ever be painted in a colour close to its own backdrop. A
+// declared foreground within minLumDiff of the backdrop is replaced with
+// a readable one derived from it (and counted in doc.ContrastFixes); a
+// cell with a backdrop but no declared foreground gets the derived
+// foreground too, since the terminal's default foreground has unknown
+// contrast against a page-painted sheet. Cells without a known backdrop
+// are left alone — both colours are the terminal's own defaults.
+func (w *walker) ensureContrast(st style.Style) style.Style {
+	if !st.HasBackdrop {
+		return st
+	}
+	if !st.HasFg {
+		st.HasFg, st.Fg = true, readableOn(st.Backdrop)
+		return st
+	}
+	d := relLuminance(st.Fg) - relLuminance(st.Backdrop)
+	if d < 0 {
+		d = -d
+	}
+	if d < minLumDiff {
+		st.Fg = readableOn(st.Backdrop)
+		w.doc.ContrastFixes++
+	}
+	return st
 }
 
 // styledCell builds one display cell. The cell's painted background is
