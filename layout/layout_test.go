@@ -593,6 +593,56 @@ func TestImageAttrsDriveSize(t *testing.T) {
 	}
 }
 
+// imageAspectOK asserts the rendered cell grid's pixel aspect ratio
+// (cols*cellPxW by rows*cellPxH) is within tol of the source aspect w/h.
+func imageAspectOK(t *testing.T, cols, rows, w, h int, tol float64) {
+	t.Helper()
+	got := float64(cols*cellPxW) / float64(rows*cellPxH)
+	want := float64(w) / float64(h)
+	if got < want*(1-tol) || got > want*(1+tol) {
+		t.Errorf("rendered aspect = %.3f (%dx%d cells), want ~%.3f (source %dx%d)",
+			got, cols, rows, want, w, h)
+	}
+}
+
+func TestImageAspectPreservedOnRowCap(t *testing.T) {
+	fetch, _ := solidImage(400, 2000)
+	d := renderWith(t, `<img src="/tall.png">`, 100, fetch)
+	cols, rows := pixelDims(d)
+	if rows != maxImageRows {
+		t.Errorf("rows = %d, want the %d-row cap", rows, maxImageRows)
+	}
+	if cols < 7 || cols > 9 {
+		t.Errorf("cols = %d, want ~8 (scaled with rows, far below width 100)", cols)
+	}
+	imageAspectOK(t, cols, rows, 400, 2000, 0.15)
+}
+
+func TestImageAspectPreservedOnWidthCap(t *testing.T) {
+	fetch, _ := solidImage(2000, 400)
+	d := renderWith(t, `<img src="/wide.png">`, 50, fetch)
+	cols, rows := pixelDims(d)
+	if cols != 50 {
+		t.Errorf("cols = %d, want the content width 50", cols)
+	}
+	if rows < 4 || rows > 6 {
+		t.Errorf("rows = %d, want ~5 (scaled with cols)", rows)
+	}
+	imageAspectOK(t, cols, rows, 2000, 400, 0.15)
+}
+
+func TestImageSmallUnchanged(t *testing.T) {
+	fetch, _ := solidImage(400, 200)
+	d := renderWith(t, `<img src="/photo.png">`, 100, fetch)
+	cols, rows := pixelDims(d)
+	if cols < 48 || cols > 52 {
+		t.Errorf("cols = %d, want ~50 (no clamp binds)", cols)
+	}
+	if rows < 11 || rows > 14 {
+		t.Errorf("rows = %d, want ~12-13 (no clamp binds)", rows)
+	}
+}
+
 func TestBackgroundFillsLine(t *testing.T) {
 	d := doc(t, `<div bgcolor="#ff6600">Hi</div>`, 20)
 	if len(d.Lines) == 0 {

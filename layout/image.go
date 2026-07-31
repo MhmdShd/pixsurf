@@ -12,7 +12,7 @@ import (
 )
 
 // maxImageRows caps how tall a rendered image may be, in terminal rows.
-const maxImageRows = 15
+const maxImageRows = 20
 
 // A terminal cell models 8 CSS px of width and 16 px of height (half-block
 // rendering gives 2 vertical pixels per cell, i.e. 8 px per half-row).
@@ -93,21 +93,28 @@ func (w *walker) emitPixels(img image.Image, displayW, displayH int) bool {
 	if rows < 1 {
 		rows = 1
 	}
-	if avail := w.width - w.indentCols(); cols > avail {
-		if avail < 1 {
-			avail = 1
-		}
-		rows = (rows*avail + cols/2) / cols
-		cols = avail
-		if rows < 1 {
-			rows = 1
-		}
+	// Clamp to the content width and the row cap in a single pass: apply
+	// the most restrictive scale factor to both dimensions so the drawn
+	// grid keeps the image's aspect ratio regardless of which limit binds.
+	maxCols := w.width - w.indentCols()
+	if maxCols < 1 {
+		maxCols = 1
 	}
-	if rows > maxImageRows {
-		cols = (cols*maxImageRows + rows/2) / rows
-		rows = maxImageRows
+	scale := 1.0
+	if s := float64(maxCols) / float64(cols); s < scale {
+		scale = s
+	}
+	if s := float64(maxImageRows) / float64(rows); s < scale {
+		scale = s
+	}
+	if scale < 1 {
+		cols = int(float64(cols)*scale + 0.5)
+		rows = int(float64(rows)*scale + 0.5)
 		if cols < 1 {
 			cols = 1
+		}
+		if rows < 1 {
+			rows = 1
 		}
 	}
 	grid := render.ToCells(img, cols, rows)
