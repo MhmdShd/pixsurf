@@ -16,6 +16,13 @@ import (
 
 const navTimeout = 15 * time.Second
 
+// opTimeout bounds non-navigation calls (screenshot, viewport, scroll, etc.)
+// so a hung page can't block forever.
+const opTimeout = 10 * time.Second
+
+// launchTimeout bounds the initial Chrome launch.
+const launchTimeout = 30 * time.Second
+
 // settle gives pages a moment to paint after the load event.
 const settle = 500 * time.Millisecond
 
@@ -34,11 +41,17 @@ func New() (*Browser, error) {
 	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
-	if err := chromedp.Run(ctx); err != nil {
+
+	launchCtx, cancelLaunch := context.WithTimeout(ctx, launchTimeout)
+	defer cancelLaunch()
+	if err := chromedp.Run(launchCtx); err != nil {
 		cancelCtx()
 		cancelAlloc()
 		return nil, fmt.Errorf("could not start Chrome — is Chrome or Chromium installed? (%w)", err)
 	}
+	// Teardown order matters: cancel the child context (Chrome tab/session)
+	// before the parent allocator context (Chrome process), so Close()
+	// shuts Chrome down gracefully instead of killing it outright.
 	return &Browser{ctx: ctx, cancels: []context.CancelFunc{cancelCtx, cancelAlloc}}, nil
 }
 
@@ -53,7 +66,9 @@ func NormalizeURL(s string) string {
 
 // SetViewport sets the page viewport in page pixels.
 func (b *Browser) SetViewport(w, h int) error {
-	return chromedp.Run(b.ctx, chromedp.EmulateViewport(int64(w), int64(h)))
+	ctx, cancel := context.WithTimeout(b.ctx, opTimeout)
+	defer cancel()
+	return chromedp.Run(ctx, chromedp.EmulateViewport(int64(w), int64(h)))
 }
 
 // Open navigates to rawURL and waits for the page to be ready.
@@ -68,8 +83,10 @@ func (b *Browser) Open(rawURL string) error {
 
 // Screenshot captures the current viewport.
 func (b *Browser) Screenshot() (image.Image, error) {
+	ctx, cancel := context.WithTimeout(b.ctx, opTimeout)
+	defer cancel()
 	var buf []byte
-	if err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot(&buf)); err != nil {
+	if err := chromedp.Run(ctx, chromedp.CaptureScreenshot(&buf)); err != nil {
 		return nil, err
 	}
 	return png.Decode(bytes.NewReader(buf))
@@ -77,8 +94,10 @@ func (b *Browser) Screenshot() (image.Image, error) {
 
 // ScrollBy scrolls the page vertically by dy page pixels.
 func (b *Browser) ScrollBy(dy float64) error {
+	ctx, cancel := context.WithTimeout(b.ctx, opTimeout)
+	defer cancel()
 	js := fmt.Sprintf("window.scrollBy(0, %f)", dy)
-	return chromedp.Run(b.ctx, chromedp.Evaluate(js, nil))
+	return chromedp.Run(ctx, chromedp.Evaluate(js, nil))
 }
 
 // ClickAt clicks at page coordinates and waits briefly for any navigation.
@@ -114,16 +133,21 @@ func (b *Browser) Reload() error {
 
 // CurrentURL returns the page's current location.
 func (b *Browser) CurrentURL() string {
+	ctx, cancel := context.WithTimeout(b.ctx, opTimeout)
+	defer cancel()
 	var u string
-	if err := chromedp.Run(b.ctx, chromedp.Location(&u)); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Location(&u)); err != nil {
 		return ""
 	}
 	return u
 }
 
-// Close shuts the browser down.
+// Close shuts the browser down. cancels is stored in teardown order:
+// child context (Chrome tab/session) first, then the parent allocator
+// context (Chrome process) — canceling the parent first would kill Chrome
+// hard and skip graceful shutdown of the child session.
 func (b *Browser) Close() {
-	for i := len(b.cancels) - 1; i >= 0; i-- {
-		b.cancels[i]()
+	for _, cancel := range b.cancels {
+		cancel()
 	}
 }
