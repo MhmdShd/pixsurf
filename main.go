@@ -180,7 +180,9 @@ func (a *app) click(x, y int) {
 		a.draw()
 	case strings.Contains(href, "#") && strings.Split(href, "#")[0] == strings.Split(a.url, "#")[0]:
 		frag := strings.SplitN(href, "#", 2)[1]
-		if ln, ok := a.doc.Anchors[frag]; ok {
+		if frag == "" {
+			a.offset = 0 // bare "#": scroll to top
+		} else if ln, ok := a.doc.Anchors[frag]; ok {
 			a.offset = ln
 			a.clampOffset()
 		} else {
@@ -226,6 +228,11 @@ func (a *app) run() {
 			case ui.Forward:
 				a.forward()
 			case ui.Reload:
+				if a.url == "" {
+					a.lastErr = "nothing to reload"
+					a.draw()
+					continue
+				}
 				a.navigate(a.url, false)
 			}
 		case ui.ClickEvent:
