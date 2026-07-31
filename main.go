@@ -2,11 +2,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"image"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/MhmdShd/pixsurf/cell"
 	"github.com/MhmdShd/pixsurf/dom"
@@ -31,7 +32,7 @@ func main() {
 	}
 	defer u.Close()
 
-	a := &app{u: u, client: fetch.New(), noImages: *noImages}
+	a := &app{u: u, client: fetch.New(), noImages: *noImages, arrivals: make(chan int, 64)}
 	a.cols, a.rows = u.GridSize()
 	a.navigate(startURL, true)
 	a.run()
@@ -66,13 +67,56 @@ type app struct {
 	values   layout.FormValues // user-entered field values; cleared on load
 
 	pendingFrag string // fragment to jump to after the next successful load
+
+	// Async image pipeline (all fields touched only by the main loop;
+	// workers communicate exclusively via cache/arrivals).
+	cache     *imageCache
+	imgCancel context.CancelFunc
+	imgCtx    context.Context
+	jobs      chan string
+	arrivals  chan int // generation tags from workers
+	gen       int      // page generation; bumped on every successful load
+	dirty     bool     // an image arrived; re-layout pending
+	debounce  *time.Timer
 }
 
 func (a *app) fetcher() layout.ImageFetcher {
-	if a.noImages {
+	if a.noImages || a.cache == nil {
 		return nil
 	}
-	return func(u string) (image.Image, error) { return a.client.Image(u) }
+	return a.cache.fetcher()
+}
+
+// resetImages tears down the previous page's image pipeline and starts a
+// fresh one: new cache, new context, new 4-worker pool, next generation.
+func (a *app) resetImages() {
+	if a.imgCancel != nil {
+		a.imgCancel()
+	}
+	a.gen++
+	a.dirty = false
+	if a.noImages {
+		return
+	}
+	a.cache = newImageCache()
+	a.imgCtx, a.imgCancel = context.WithCancel(context.Background())
+	a.jobs = make(chan string, imageJobsCap)
+	for i := 0; i < imageWorkers; i++ {
+		go imageWorker(a.imgCtx, a.client, a.cache, a.jobs, a.arrivals, a.gen)
+	}
+}
+
+// spawnFetches hands the render pass's wanted URLs to the worker pool.
+func (a *app) spawnFetches() {
+	if a.noImages || a.cache == nil {
+		return
+	}
+	for _, u := range a.cache.takeWanted() {
+		select {
+		case a.jobs <- u:
+		default: // pool queue full (can't happen under the cap); placeholder stays
+		}
+	}
 }
 
 // load fetches and lays out rawURL, replacing the current document. It does
@@ -96,7 +140,9 @@ func (a *app) load(rawURL string) bool {
 	}
 	a.dom = d
 	a.values = nil // new page: previous pages' field values are stale
+	a.resetImages()
 	a.doc = layout.Render(d, a.cols, a.fetcher(), a.values)
+	a.spawnFetches()
 	a.url = finalURL
 	if truncated {
 		a.lastErr = "page truncated at 5MB"
@@ -137,6 +183,7 @@ func (a *app) navigate(rawURL string, push bool) {
 // keeping the scroll position proportionally.
 func (a *app) relayout() {
 	if a.dom == nil {
+		a.draw()
 		return
 	}
 	ratio := 0.0
@@ -144,7 +191,22 @@ func (a *app) relayout() {
 		ratio = float64(a.offset) / float64(len(a.doc.Lines))
 	}
 	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values)
+	a.spawnFetches()
 	a.offset = int(ratio * float64(len(a.doc.Lines)))
+	a.clampOffset()
+	a.draw()
+}
+
+// imageRelayout re-flows the cached DOM after image arrivals, keeping the
+// exact scroll offset (clamped). Small jumps when images land above the
+// viewport are accepted.
+func (a *app) imageRelayout() {
+	a.dirty = false
+	if a.dom == nil {
+		return
+	}
+	a.doc = layout.Render(a.dom, a.cols, a.fetcher(), a.values)
+	a.spawnFetches()
 	a.clampOffset()
 	a.draw()
 }
@@ -274,80 +336,130 @@ func (a *app) forward() {
 	}
 }
 
+// run is the main loop: a select over ui events, image arrivals, and the
+// redraw debounce timer. All drawing happens here.
 func (a *app) run() {
-	for ev := range a.u.Events() {
-		switch e := ev.(type) {
-		case ui.ActionEvent:
-			switch e.Kind {
-			case ui.Quit:
+	const debounceDelay = 200 * time.Millisecond
+	for {
+		var timerC <-chan time.Time
+		if a.debounce != nil {
+			timerC = a.debounce.C
+		}
+		select {
+		case ev, ok := <-a.u.Events():
+			if !ok || a.handleEvent(ev) {
+				if a.imgCancel != nil {
+					a.imgCancel()
+				}
 				return
-			case ui.ScrollUp:
-				a.scroll(-1)
-			case ui.ScrollDown:
-				a.scroll(1)
-			case ui.PageUp:
-				a.scroll(-(a.rows - 1))
-			case ui.PageDown:
-				a.scroll(a.rows - 1)
-			case ui.Back:
-				a.back()
-			case ui.Forward:
-				a.forward()
-			case ui.Reload:
-				if a.url == "" {
-					a.lastErr = "nothing to reload"
-					a.draw()
-					continue
-				}
-				a.navigate(a.url, false)
-			case ui.URLBar:
-				a.purpose = purposeURL
-				a.u.Prompt("URL: ", "")
 			}
-		case ui.ClickEvent:
-			a.click(e.X, e.Y)
-		case ui.ResizeEvent:
-			cols, rows := a.u.GridSize()
-			if cols == a.cols && rows == a.rows {
-				a.draw() // redraw request (prompt typing)
-				continue
+			// A prompt may have just closed with a re-layout still pending.
+			if a.dirty && a.purpose == purposeNone && a.debounce == nil {
+				a.imageRelayout()
 			}
-			if cols < 1 || rows < 1 {
-				continue
+		case g := <-a.arrivals:
+			if !keepArrival(g, a.gen) {
+				continue // stale page generation
 			}
-			a.cols, a.rows = cols, rows
-			a.relayout()
-		case ui.InputEvent:
-			purpose := a.purpose
-			a.purpose = purposeNone
-			switch purpose {
-			case purposeURL:
-				if e.Text == "" {
-					a.draw()
-					continue
-				}
-				a.navigate(e.Text, true)
-			case purposeField:
-				if a.doc == nil || a.fieldIdx >= len(a.doc.Fields) {
-					a.draw()
-					continue
-				}
-				fl := a.doc.Fields[a.fieldIdx]
-				if fl.Name != "" {
-					if a.values == nil {
-						a.values = layout.FormValues{}
+			a.dirty = true
+			if a.debounce == nil {
+				a.debounce = time.NewTimer(debounceDelay)
+			} else {
+				if !a.debounce.Stop() {
+					select {
+					case <-a.debounce.C:
+					default:
 					}
-					form := a.doc.Forms[fl.FormIdx]
-					a.values[layout.ValuesKey(form.Action, fl.Name)] = e.Text
-					a.relayout() // show the typed value in its box
 				}
-				a.submit(fl.FormIdx)
-			default:
-				a.draw()
+				a.debounce.Reset(debounceDelay)
 			}
-		case ui.InputCancelEvent:
-			a.purpose = purposeNone
-			a.draw()
+		case <-timerC:
+			a.debounce = nil
+			if a.dirty && a.purpose == purposeNone {
+				a.imageRelayout()
+			}
+			// Prompt active: hold dirty; applied when the prompt closes.
 		}
 	}
+}
+
+// handleEvent processes one ui event; it reports whether to quit.
+func (a *app) handleEvent(ev ui.Event) bool {
+	switch e := ev.(type) {
+	case ui.ActionEvent:
+		switch e.Kind {
+		case ui.Quit:
+			return true
+		case ui.ScrollUp:
+			a.scroll(-1)
+		case ui.ScrollDown:
+			a.scroll(1)
+		case ui.PageUp:
+			a.scroll(-(a.rows - 1))
+		case ui.PageDown:
+			a.scroll(a.rows - 1)
+		case ui.Back:
+			a.back()
+		case ui.Forward:
+			a.forward()
+		case ui.Reload:
+			if a.url == "" {
+				a.lastErr = "nothing to reload"
+				a.draw()
+				break
+			}
+			a.navigate(a.url, false)
+		case ui.URLBar:
+			a.purpose = purposeURL
+			a.u.Prompt("URL: ", "")
+		}
+	case ui.ClickEvent:
+		a.click(e.X, e.Y)
+	case ui.ResizeEvent:
+		cols, rows := a.u.GridSize()
+		if cols == a.cols && rows == a.rows {
+			a.draw() // redraw request (prompt typing)
+			break
+		}
+		if cols < 1 || rows < 1 {
+			break
+		}
+		a.cols, a.rows = cols, rows
+		a.relayout()
+	case ui.InputEvent:
+		purpose := a.purpose
+		a.purpose = purposeNone
+		switch purpose {
+		case purposeURL:
+			if e.Text == "" {
+				a.draw()
+				break
+			}
+			a.navigate(e.Text, true)
+		case purposeField:
+			if a.doc == nil || a.fieldIdx >= len(a.doc.Fields) {
+				a.draw()
+				break
+			}
+			fl := a.doc.Fields[a.fieldIdx]
+			if fl.Name == "" {
+				a.lastErr = "field has no name; not submitted"
+				a.draw()
+				break
+			}
+			if a.values == nil {
+				a.values = layout.FormValues{}
+			}
+			form := a.doc.Forms[fl.FormIdx]
+			a.values[layout.ValuesKey(form.Action, fl.Name)] = e.Text
+			a.relayout() // show the typed value in its box
+			a.submit(fl.FormIdx)
+		default:
+			a.draw()
+		}
+	case ui.InputCancelEvent:
+		a.purpose = purposeNone
+		a.draw()
+	}
+	return false
 }
