@@ -69,6 +69,9 @@ func (e *Engine) Resolve(n *dom.Node, parent style.Style) style.Style {
 	for _, d := range e.cascade(n) {
 		applyDecl(&s, d.prop, d.val)
 	}
+	// HasBg was reset above, so a true value now means the element
+	// declared a background of its own (attribute or cascade).
+	s.OwnBg = s.HasBg
 	// The painted backdrop follows a different rule from the cascade:
 	// with no background of its own the element is transparent and
 	// keeps the ancestor backdrop copied from parent.
@@ -243,6 +246,12 @@ func applyDecl(s *style.Style, prop, val string) {
 		case "none":
 			s.Transform = style.TransformNone
 		}
+	case "display":
+		if d, ok := style.ParseDisplay(v); ok {
+			s.Display = d
+		}
+	case "margin", "margin-left", "margin-right":
+		style.ApplyMargin(s, prop, v)
 	case "white-space":
 		switch v {
 		case "pre", "pre-wrap":

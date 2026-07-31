@@ -1297,3 +1297,110 @@ func TestContrastSafetyNetLeavesGoodPairsAlone(t *testing.T) {
 		}
 	}
 }
+
+func contentLines(d *Document) []string {
+	var out []string
+	for i := range d.Lines {
+		if s := lineText(d, i); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func TestDisplayInlineKeepsOnOneLine(t *testing.T) {
+	d := docC(t, `<div style="display:inline">a</div><div style="display:inline">b</div>`, 40)
+	got := contentLines(d)
+	if len(got) != 1 || got[0] != "a b" {
+		t.Errorf("content lines = %q, want [\"a b\"]", got)
+	}
+}
+
+func TestDisplayBlockBreaksInlineTag(t *testing.T) {
+	d := docC(t, `<p><span style="display:block">a</span><span style="display:block">b</span></p>`, 40)
+	got := contentLines(d)
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("content lines = %q, want [\"a\" \"b\"]", got)
+	}
+}
+
+func TestFlexChildrenOnOneRow(t *testing.T) {
+	d := docC(t, `<div class="row"><div>alpha</div><div>beta</div><div>gamma</div></div>`, 40,
+		".row { display: flex }")
+	got := contentLines(d)
+	if len(got) != 1 || got[0] != "alpha beta gamma" {
+		t.Errorf("content lines = %q, want [\"alpha beta gamma\"]", got)
+	}
+}
+
+func TestFlexRowWraps(t *testing.T) {
+	d := docC(t, `<div class="row"><div>aaa</div><div>bbb</div><div>ccc</div></div>`, 8,
+		".row { display: flex }")
+	got := contentLines(d)
+	want := []string{"aaa bbb", "ccc"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("content lines = %q, want %q", got, want)
+	}
+}
+
+func TestAutoMarginCentres(t *testing.T) {
+	d := docC(t, `<div style="width:20px;margin:0 auto"><a href="/x">hi</a></div>`, 40)
+	// "hi" is 2 cols; shift = (40-2)/2 = 19
+	if got := lineText(d, 0); got != strings.Repeat(" ", 19)+"hi" {
+		t.Errorf("line0 = %q, want centred \"hi\"", got)
+	}
+	if _, ok := d.LinkAt(0, 0); ok {
+		t.Error("LinkAt(0,0) matches before the centred text")
+	}
+	for _, col := range []int{19, 20} {
+		if u, ok := d.LinkAt(0, col); !ok || u != "https://example.org/x" {
+			t.Errorf("LinkAt(0,%d) = %q,%v, want link at shifted columns", col, u, ok)
+		}
+	}
+	// 3-value shorthand centres too; margin-left:auto alone right-aligns.
+	d2 := docC(t, `<div style="margin:8px auto 0">hi</div>`, 40)
+	if got := lineText(d2, 0); got != strings.Repeat(" ", 19)+"hi" {
+		t.Errorf("3-value shorthand line0 = %q, want centred", got)
+	}
+	d3 := docC(t, `<div style="margin-left:auto">hi</div>`, 40)
+	if got := lineText(d3, 0); got != strings.Repeat(" ", 38)+"hi" {
+		t.Errorf("margin-left:auto line0 = %q, want right-aligned", got)
+	}
+}
+
+func TestInlineBackgroundDoesNotFillLine(t *testing.T) {
+	d := docC(t, `<p>go <span style="background:#000080">hot</span> end</p>`, 20)
+	if got := lineText(d, 0); got != "go hot end" {
+		t.Fatalf("line0 = %q", got)
+	}
+	line := d.Lines[0]
+	if len(line) != 10 {
+		t.Fatalf("line length = %d, want 10 (no full-width padding)", len(line))
+	}
+	navy := cell.RGB{R: 0, G: 0, B: 0x80}
+	for i, c := range line {
+		if i >= 3 && i <= 5 {
+			if !c.HasBg || c.Bg != navy {
+				t.Errorf("cell %d: HasBg=%v Bg=%v, want navy behind the span's glyphs", i, c.HasBg, c.Bg)
+			}
+			continue
+		}
+		if c.HasBg {
+			t.Errorf("cell %d has HasBg outside the inline element", i)
+		}
+	}
+}
+
+func TestBlockBackgroundStillFillsLine(t *testing.T) {
+	d := docC(t, `<div style="background:#ff6600">Hi</div>`, 20)
+	line := d.Lines[0]
+	if len(line) != 20 {
+		t.Fatalf("line length = %d, want 20 (full-width fill)", len(line))
+	}
+	want := cell.RGB{R: 255, G: 102, B: 0}
+	for i, c := range line {
+		if !c.HasBg || c.Bg != want {
+			t.Errorf("cell %d: HasBg=%v Bg=%v, want block background", i, c.HasBg, c.Bg)
+		}
+	}
+}

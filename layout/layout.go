@@ -88,6 +88,7 @@ func Render(d *dom.Doc, width int, images ImageFetcher, values FormValues, style
 		rootSt.HasBackdrop, rootSt.Backdrop = true, out.PageBg
 	}
 	w.hasStyleBg, w.styleBg = rootSt.HasBackdrop, rootSt.Backdrop
+	w.hasBlockBg, w.blockBg = rootSt.HasBackdrop, rootSt.Backdrop
 	w.renderNode(root, rootSt)
 	w.flushLine()
 	return out
@@ -234,13 +235,14 @@ type walker struct {
 	lineBase int         // column where content starts (after indent)
 	started  bool        // startLine has run for the current line
 
-	pendingBlank  bool     // emit one blank line before the next content
-	blankHasBg    bool     // paint the pending blank with blankBg
-	blankBg       cell.RGB // backdrop of the pending blank's containing sheet
-	pendingSpace  bool     // a collapsed space is owed before the next word
-	joinNextBlock bool     // bullet-join window: the line still holds only an <li> marker
-	skipChrome    bool     // skip nav/header/footer/aside subtrees
-	hfDepth       int      // nesting depth inside kept header/footer elements
+	pendingBlank  bool        // emit one blank line before the next content
+	blankHasBg    bool        // paint the pending blank with blankBg
+	blankBg       cell.RGB    // backdrop of the pending blank's containing sheet
+	pendingSpace  bool        // a collapsed space is owed before the next word
+	spaceSt       style.Style // style the pending space arose in (its backdrop paints the space)
+	joinNextBlock bool        // bullet-join window: the line still holds only an <li> marker
+	skipChrome    bool        // skip nav/header/footer/aside subtrees
+	hfDepth       int         // nesting depth inside kept header/footer elements
 
 	measuring bool // natural-width measurement: skip background fill
 
@@ -253,6 +255,27 @@ type walker struct {
 	hasStyleBg bool
 	linePixels bool        // current line holds image pixel cells
 	lineAlign  style.Align // alignment of the style last applied on this line
+
+	// Block-level background currently in effect: the page sheet or the
+	// own background of the innermost enclosing block-level element.
+	// Only this fills whole lines (fillBackground); an inline element's
+	// background stays behind its own glyphs.
+	blockBg    cell.RGB
+	hasBlockBg bool
+
+	// flexRow is set while walking the immediate children of a flex or
+	// grid container: each child lays out inline regardless of its own
+	// block-ness, separated by single spaces.
+	flexRow bool
+
+	// alignForce overrides line alignment while an auto-margin block is
+	// open (margin: 0 auto centres, margin-left: auto right-aligns).
+	alignForce style.Align
+
+	// inlineBox counts open inline-block / inline-flex boxes; while > 0,
+	// descendant blocks do not break the line (they break inside the box
+	// in CSS, which a flat flow cannot represent).
+	inlineBox int
 
 	pre   bool // inside <pre>: verbatim text, no wrap
 	quote int  // blockquote nesting depth (2 cols each)
@@ -273,6 +296,17 @@ var blockTags = map[string]bool{
 	"form": true, "fieldset": true, "address": true, "dl": true,
 	"dt": true, "dd": true,
 }
+
+// extraBlockish are tags with dedicated handlers that are nonetheless
+// block-level for display resolution and block-background purposes.
+var extraBlockish = map[string]bool{
+	"pre": true, "blockquote": true, "ul": true, "ol": true, "li": true,
+	"table": true, "hr": true, "td": true, "th": true,
+}
+
+// blockishTag reports a tag's default block-ness absent any CSS display
+// declaration.
+func blockishTag(tag string) bool { return blockTags[tag] || extraBlockish[tag] }
 
 func (w *walker) renderNode(n *dom.Node, st style.Style) {
 	switch n.Type {
@@ -303,6 +337,66 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		st = style.ApplyInline(style.ForTag(tag, st), n)
 	}
 
+	// This element is a flex item when its parent is a flex/grid
+	// container; the flag applies to immediate children only, so clear
+	// it for this element's own descent and restore it for siblings.
+	flexItem := w.flexRow
+	w.flexRow = false
+	defer func() { w.flexRow = flexItem }()
+
+	// Effective display: the tag default overridden by any CSS display
+	// declaration; flex items always lay out inline.
+	tagBlock := blockishTag(tag)
+	isBlock := tagBlock
+	switch st.Display {
+	case style.DisplayInline, style.DisplayInlineBlock, style.DisplayInlineFlex:
+		isBlock = false
+	case style.DisplayBlock, style.DisplayFlex:
+		isBlock = true
+	}
+	if flexItem || w.inlineBox > 0 {
+		// Flex items lay out inline; and a block inside an open
+		// inline-block box breaks inside that box in CSS, which a flat
+		// character flow approximates by not breaking at all.
+		isBlock = false
+	}
+	flexC := st.Display == style.DisplayFlex || st.Display == style.DisplayInlineFlex
+	inlineBoxEl := st.Display == style.DisplayInlineBlock || st.Display == style.DisplayInlineFlex
+	if inlineBoxEl {
+		w.inlineBox++
+		defer func() { w.inlineBox-- }()
+	}
+
+	// Auto horizontal margins centre (or right-shift) a block's lines.
+	// Applied as a walker-level override rather than by mutating st:
+	// resolver memoisation means children never see a mutated parent.
+	if isBlock && st.MarginLeftAuto {
+		saved := w.alignForce
+		if st.MarginRightAuto {
+			w.alignForce = style.AlignCenter
+		} else {
+			w.alignForce = style.AlignRight
+		}
+		defer func() { w.alignForce = saved }()
+	}
+
+	// A block-level element's own background fills whole lines while it
+	// is open; an inline element's background never does.
+	if isBlock && st.OwnBg && st.HasBackdrop {
+		savedHas, savedBg := w.hasBlockBg, w.blockBg
+		w.hasBlockBg, w.blockBg = true, st.Backdrop
+		defer func() { w.hasBlockBg, w.blockBg = savedHas, savedBg }()
+	}
+
+	// An element laid inline against its block nature (a flex item, or
+	// display:inline on a block tag) gets a single separating space on
+	// each side so adjacent items never run together; pendingSpace
+	// collapses, so no space doubles or lands at a line edge.
+	if flexItem || inlineBoxEl || (tagBlock && !isBlock) {
+		w.pendingSpace, w.spaceSt = true, parentSt
+		defer func() { w.pendingSpace, w.spaceSt = true, parentSt }()
+	}
+
 	switch {
 	case tag == "br":
 		w.recordAnchor(n)
@@ -330,7 +424,7 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.walkChildren(n, st)
 		w.quote--
 		w.blockEnd(parentSt)
-	case tag == "ul" || tag == "ol":
+	case (tag == "ul" || tag == "ol") && isBlock && !flexC:
 		if w.skipChrome && w.hfDepth > 0 && isLinkFarm(n) {
 			return // nav-list inside a kept header/footer (no nav markup)
 		}
@@ -351,7 +445,7 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 				w.requestBlank(parentSt)
 			}
 		}
-	case tag == "li":
+	case tag == "li" && isBlock:
 		if !w.joinNextBlock { // nested item on a bare bullet line joins it
 			w.flushLine()
 		}
@@ -375,6 +469,13 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.flushLine()
 		w.pendingBlank = false // items pack tightly; ul/ol owns outer blanks
 	case tag == "a":
+		if p := prevRenderedSibling(n); p != nil && p.Type == dom.ElementNode && strings.EqualFold(p.Data, "a") {
+			// Directly adjacent links (</a><a>, no whitespace between):
+			// browsers keep them apart with padding; on a character grid
+			// a single separating space keeps them readable and
+			// individually clickable.
+			w.pendingSpace, w.spaceSt = true, parentSt
+		}
 		w.recordAnchor(n)
 		href := dom.Attr(n, "href")
 		if href == "" || w.linkURL != "" { // no target, or nested link: plain
@@ -428,15 +529,23 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 			w.linkURL = ""
 		}
 		w.flushLine()
-	case blockTags[tag]:
+	case isBlock || flexC:
 		hf := tag == "header" || tag == "footer"
 		if hf {
 			w.hfDepth++
 		}
-		w.blockStart(parentSt)
+		if isBlock {
+			w.blockStart(parentSt)
+		}
 		w.recordAnchor(n)
+		if flexC {
+			w.flexRow = true
+		}
 		w.walkChildren(n, st)
-		w.blockEnd(parentSt)
+		w.flexRow = false
+		if isBlock {
+			w.blockEnd(parentSt)
+		}
 		if hf {
 			w.hfDepth--
 		}
@@ -444,6 +553,22 @@ func (w *walker) renderNode(n *dom.Node, st style.Style) {
 		w.recordAnchor(n)
 		w.walkChildren(n, st)
 	}
+}
+
+// prevRenderedSibling returns n's previous sibling, skipping nodes that
+// render nothing (empty text, comments), so adjacency checks see the
+// element that actually precedes n in the output.
+func prevRenderedSibling(n *dom.Node) *dom.Node {
+	for p := n.PrevSibling; p != nil; p = p.PrevSibling {
+		if p.Type == dom.TextNode && p.Data == "" {
+			continue
+		}
+		if p.Type != dom.TextNode && p.Type != dom.ElementNode {
+			continue
+		}
+		return p
+	}
+	return nil
 }
 
 func (w *walker) walkChildren(n *dom.Node, st style.Style) {

@@ -21,22 +21,22 @@ func (w *walker) emitText(text string, st style.Style) {
 	}
 	if strings.TrimSpace(text) == "" {
 		if text != "" && w.hasContent() {
-			w.pendingSpace = true
+			w.pendingSpace, w.spaceSt = true, st
 		}
 		return
 	}
 	if w.hasContent() && startsWithSpace(text) {
-		w.pendingSpace = true
+		w.pendingSpace, w.spaceSt = true, st
 	}
 	words := strings.Fields(text)
 	for i, word := range words {
 		if i > 0 {
-			w.pendingSpace = true
+			w.pendingSpace, w.spaceSt = true, st
 		}
 		w.emitWord(word, st)
 	}
 	if endsWithSpace(text) {
-		w.pendingSpace = true
+		w.pendingSpace, w.spaceSt = true, st
 	}
 }
 
@@ -77,7 +77,10 @@ func (w *walker) emitWord(word string, st style.Style) {
 		sp = 0
 	}
 	if sp == 1 {
-		w.putRune(' ', st)
+		// The separator paints with the style it arose in, so a space
+		// preceding an inline-background element (a small button, say)
+		// is not painted with that element's background.
+		w.putRune(' ', w.spaceSt)
 	}
 	for _, r := range word {
 		rw := runewidth.RuneWidth(r)
@@ -130,6 +133,9 @@ func (w *walker) putRune(r rune, st style.Style) {
 	st = w.ensureContrast(st)
 	w.hasStyleBg, w.styleBg = st.HasBackdrop, st.Backdrop
 	w.lineAlign = st.Align
+	if w.alignForce != style.AlignNone {
+		w.lineAlign = w.alignForce
+	}
 	if w.linkURL != "" && w.linkOpen < 0 {
 		w.linkOpen = w.col
 	}
@@ -262,10 +268,14 @@ func (w *walker) alignLine() {
 	}
 }
 
-// fillBackground makes a line that carries a background color render as a
-// solid band: leading indent cells take the first content background, and
-// the line is padded out to the content width with the background active
-// at its end. Lines with no background cell are left exactly as built.
+// fillBackground makes a line inside a painted block render as a solid
+// band: cells without a background of their own (indent, alignment
+// padding) take the block background, and the line is padded out to the
+// content width with it. Only a BLOCK-level background fills the line —
+// the page sheet or a block element's own background, tracked in
+// w.blockBg — so an inline element's background (a small button, say)
+// stays behind its own glyphs and never smears across the line. Lines
+// with no block background in effect are left exactly as built.
 // Skipped while measuring natural cell widths: the padding would make
 // every background line look content-width wide.
 func (w *walker) fillBackground() {
@@ -292,27 +302,17 @@ func (w *walker) fillBackground() {
 		}
 		return
 	}
-	first, last := -1, -1
-	for i, c := range w.line {
-		if c.HasBg {
-			if first < 0 {
-				first = i
-			}
-			last = i
-		}
-	}
-	if first < 0 {
+	if !w.hasBlockBg {
 		return
 	}
-	for i := 0; i < first; i++ {
+	for i := range w.line {
 		if !w.line[i].HasBg {
 			w.line[i].HasBg = true
-			w.line[i].Bg = w.line[first].Bg
+			w.line[i].Bg = w.blockBg
 		}
 	}
-	bg := w.line[last].Bg
 	for w.col < w.width {
-		w.line = append(w.line, cell.Cell{Rune: ' ', HasBg: true, Bg: bg})
+		w.line = append(w.line, cell.Cell{Rune: ' ', HasBg: true, Bg: w.blockBg})
 		w.col++
 	}
 }

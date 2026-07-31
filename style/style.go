@@ -19,6 +19,39 @@ const (
 	AlignRight
 )
 
+// Display is the CSS display class relevant to line layout: whether an
+// element breaks the line for itself, and whether it lays its immediate
+// children out inline (flex/grid containers).
+type Display uint8
+
+const (
+	DisplayUnset       Display = iota // no declaration: tag default applies
+	DisplayInline                     // inline: never block-breaks
+	DisplayInlineBlock                // inline-block: an inline box; descendant blocks stay inside it
+	DisplayBlock                      // block, list-item, table, flow-root: always breaks
+	DisplayFlex                       // flex, grid: block container, children flow inline
+	DisplayInlineFlex                 // inline-flex, inline-grid: inline container, children inline
+)
+
+// ParseDisplay maps a CSS display value to its layout class. Values
+// with no line-layout meaning here (none, contents, table-cell, ...)
+// return false so the tag default stays in effect.
+func ParseDisplay(v string) (Display, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "inline":
+		return DisplayInline, true
+	case "inline-block":
+		return DisplayInlineBlock, true
+	case "block", "list-item", "table", "flow-root":
+		return DisplayBlock, true
+	case "flex", "grid":
+		return DisplayFlex, true
+	case "inline-flex", "inline-grid":
+		return DisplayInlineFlex, true
+	}
+	return DisplayUnset, false
+}
+
 // Transform is a text case transform (CSS text-transform).
 type Transform uint8
 
@@ -46,6 +79,20 @@ type Style struct {
 	Backdrop    cell.RGB
 	HasBackdrop bool
 
+	// OwnBg reports that this element declared a background of its own
+	// (as opposed to a backdrop showing through from an ancestor). Only
+	// a block-level element's own background fills whole lines; an
+	// inline element's paints just behind its glyphs. Never inherited.
+	OwnBg bool
+
+	// Display is the element's own display class; never inherited.
+	Display Display
+
+	// Auto horizontal margins (from margin-left/right or the margin
+	// shorthand): both auto centres a block, left auto alone pushes it
+	// right. Never inherited.
+	MarginLeftAuto, MarginRightAuto bool
+
 	// CSS-driven effects; never set by ForTag. Align shifts flushed
 	// lines, Transform recases emitted text, Pre selects the verbatim
 	// no-wrap path (CSS white-space: pre / pre-wrap).
@@ -70,6 +117,10 @@ var linkColor = cell.RGB{R: 95, G: 175, B: 255}
 // ForTag returns parent adjusted by tag defaults (inheritance preserved).
 func ForTag(tag string, parent Style) Style {
 	s := parent
+	// Non-inherited, per-element properties never carry over.
+	s.OwnBg = false
+	s.Display = DisplayUnset
+	s.MarginLeftAuto, s.MarginRightAuto = false, false
 	switch tag {
 	case "h1", "h2":
 		s.Bold, s.Underline = true, true
@@ -168,24 +219,59 @@ func ApplyInline(s Style, n *html.Node) Style {
 		s.HasFg, s.Fg = true, c
 	}
 	if c, ok := ParseColor(attr("bgcolor")); ok {
-		s.HasBg, s.Bg = true, c
+		s.HasBg, s.Bg, s.OwnBg = true, c, true
 	}
 	for _, decl := range strings.Split(attr("style"), ";") {
 		k, v, ok := strings.Cut(decl, ":")
 		if !ok {
 			continue
 		}
-		switch strings.TrimSpace(strings.ToLower(k)) {
+		switch prop := strings.TrimSpace(strings.ToLower(k)); prop {
 		case "color":
 			if c, ok := ParseColor(v); ok {
 				s.HasFg, s.Fg = true, c
 			}
 		case "background-color", "background":
 			if c, ok := ParseColor(v); ok {
-				s.HasBg, s.Bg = true, c
+				s.HasBg, s.Bg, s.OwnBg = true, c, true
 			}
+		case "display":
+			if d, ok := ParseDisplay(v); ok {
+				s.Display = d
+			}
+		case "margin", "margin-left", "margin-right":
+			ApplyMargin(&s, prop, v)
 		}
 	}
 	s.SyncBackdrop()
 	return s
+}
+
+// ApplyMargin applies a margin-left, margin-right or margin shorthand
+// declaration to s, recording only whether each horizontal margin is
+// auto (lengths are meaningless on a character grid). The shorthand
+// takes 1-4 values: all; vertical horizontal; top horizontal bottom;
+// top right bottom left.
+func ApplyMargin(s *Style, prop, val string) {
+	auto := func(v string) bool { return strings.EqualFold(strings.TrimSpace(v), "auto") }
+	switch prop {
+	case "margin-left":
+		s.MarginLeftAuto = auto(val)
+	case "margin-right":
+		s.MarginRightAuto = auto(val)
+	case "margin":
+		parts := strings.Fields(val)
+		var left, right string
+		switch len(parts) {
+		case 1:
+			left, right = parts[0], parts[0]
+		case 2, 3:
+			left, right = parts[1], parts[1]
+		case 4:
+			right, left = parts[1], parts[3]
+		default:
+			return
+		}
+		s.MarginLeftAuto, s.MarginRightAuto = auto(left), auto(right)
+	}
 }

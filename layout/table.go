@@ -259,6 +259,7 @@ func (w *walker) miniLayout(n *dom.Node, width int, st style.Style) *Document {
 		mw.formIdx = 0
 	}
 	mw.hasStyleBg, mw.styleBg = st.HasBackdrop, st.Backdrop
+	mw.hasBlockBg, mw.blockBg = st.HasBackdrop, st.Backdrop
 	mw.linkURL = w.linkURL // an <a> wrapping the table keeps its links inside
 	mw.skipChrome = w.skipChrome
 	mw.hfDepth = w.hfDepth
