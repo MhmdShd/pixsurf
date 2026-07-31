@@ -37,6 +37,14 @@ func main() {
 	a.run()
 }
 
+// promptPurpose identifies what an active status-bar prompt is for.
+type promptPurpose int
+
+const (
+	purposeNone promptPurpose = iota
+	purposeURL
+)
+
 type app struct {
 	u        *ui.UI
 	client   *fetch.Client
@@ -50,6 +58,8 @@ type app struct {
 
 	history []string
 	histPos int // index of current page in history
+
+	purpose promptPurpose
 }
 
 func (a *app) fetcher() layout.ImageFetcher {
@@ -234,13 +244,16 @@ func (a *app) run() {
 					continue
 				}
 				a.navigate(a.url, false)
+			case ui.URLBar:
+				a.purpose = purposeURL
+				a.u.Prompt("URL: ", "")
 			}
 		case ui.ClickEvent:
 			a.click(e.X, e.Y)
 		case ui.ResizeEvent:
 			cols, rows := a.u.GridSize()
 			if cols == a.cols && rows == a.rows {
-				a.draw() // redraw request (URL bar typing)
+				a.draw() // redraw request (prompt typing)
 				continue
 			}
 			if cols < 1 || rows < 1 {
@@ -248,8 +261,20 @@ func (a *app) run() {
 			}
 			a.cols, a.rows = cols, rows
 			a.relayout()
-		case ui.URLEvent:
-			a.navigate(e.URL, true)
+		case ui.InputEvent:
+			purpose := a.purpose
+			a.purpose = purposeNone
+			switch purpose {
+			case purposeURL:
+				if e.Text == "" {
+					a.draw()
+					continue
+				}
+				a.navigate(e.Text, true)
+			}
+		case ui.InputCancelEvent:
+			a.purpose = purposeNone
+			a.draw()
 		}
 	}
 }

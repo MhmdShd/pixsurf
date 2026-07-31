@@ -21,9 +21,10 @@ const (
 	Forward
 	Reload
 	Quit
+	URLBar
 )
 
-// Event is one of ActionEvent, ClickEvent, ResizeEvent, URLEvent.
+// Event is one of ActionEvent, ClickEvent, ResizeEvent, InputEvent, InputCancelEvent.
 type Event interface{}
 
 // ActionEvent is a keyboard navigation action.
@@ -35,8 +36,11 @@ type ClickEvent struct{ X, Y int }
 // ResizeEvent reports that the terminal was resized (also used to request redraws).
 type ResizeEvent struct{}
 
-// URLEvent is a URL submitted from the URL bar.
-type URLEvent struct{ URL string }
+// InputEvent is emitted when a status-bar prompt is submitted with Enter.
+type InputEvent struct{ Text string }
+
+// InputCancelEvent is emitted when a status-bar prompt is dismissed with Esc.
+type InputCancelEvent struct{}
 
 // UI owns the tcell screen.
 type UI struct {
@@ -45,6 +49,7 @@ type UI struct {
 
 	mu        sync.Mutex
 	inputMode bool
+	label     string
 	input     []rune
 }
 
@@ -86,7 +91,10 @@ func (u *UI) loop() {
 			u.screen.Sync()
 			u.events <- ResizeEvent{}
 		case *tcell.EventMouse:
-			if e.Buttons()&tcell.Button1 != 0 {
+			u.mu.Lock()
+			prompting := u.inputMode
+			u.mu.Unlock()
+			if !prompting && e.Buttons()&tcell.Button1 != 0 {
 				x, y := e.Position()
 				_, rows := u.GridSize()
 				if y < rows {
@@ -137,15 +145,29 @@ func (u *UI) handleKey(e *tcell.EventKey) {
 	case 'r':
 		u.events <- ActionEvent{Kind: Reload}
 	case 'g':
-		u.mu.Lock()
-		u.inputMode = true
-		u.input = nil
-		u.mu.Unlock()
-		u.events <- ResizeEvent{}
+		u.events <- ActionEvent{Kind: URLBar}
 	}
 }
 
+// Prompt enters modal input mode, showing label+initial text in the status
+// bar. Enter emits InputEvent{Text}; Esc emits InputCancelEvent{}. While
+// active, mouse clicks and navigation keys are ignored (Ctrl-C still quits).
+func (u *UI) Prompt(label, initial string) {
+	u.mu.Lock()
+	u.inputMode = true
+	u.label = label
+	u.input = []rune(initial)
+	u.mu.Unlock()
+	u.events <- ResizeEvent{}
+}
+
 func (u *UI) handleInputKey(e *tcell.EventKey) {
+	// Ctrl-C still quits, even while a prompt is active.
+	if e.Key() == tcell.KeyCtrlC {
+		u.events <- ActionEvent{Kind: Quit}
+		return
+	}
+
 	var toSend Event
 
 	switch e.Key() {
@@ -154,16 +176,12 @@ func (u *UI) handleInputKey(e *tcell.EventKey) {
 		u.inputMode = false
 		text := string(u.input)
 		u.mu.Unlock()
-		if text != "" {
-			toSend = URLEvent{URL: text}
-		} else {
-			toSend = ResizeEvent{}
-		}
+		toSend = InputEvent{Text: text}
 	case tcell.KeyEsc:
 		u.mu.Lock()
 		u.inputMode = false
 		u.mu.Unlock()
-		toSend = ResizeEvent{}
+		toSend = InputCancelEvent{}
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		u.mu.Lock()
 		if len(u.input) > 0 {
@@ -218,7 +236,7 @@ func (u *UI) drawStatus(status string) {
 	y := h - 1
 	u.mu.Lock()
 	if u.inputMode {
-		status = "URL: " + string(u.input) + "▏"
+		status = u.label + string(u.input) + "▏"
 	}
 	u.mu.Unlock()
 	st := tcell.StyleDefault.Reverse(true)
