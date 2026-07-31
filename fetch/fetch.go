@@ -10,8 +10,10 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/cookiejar"
+	"strings"
 	"time"
 
 	_ "golang.org/x/image/webp"
@@ -61,28 +63,41 @@ func (c *Client) get(ctx context.Context, hc *http.Client, rawURL string) (*http
 	return resp, nil
 }
 
+// Response is a fetched page.
+type Response struct {
+	Body        string // decoded to UTF-8, capped at 5MB
+	URL         string // final URL after redirects (base for relative resolution)
+	ContentType string // media type only, lowercased, parameters stripped; "" if absent
+	Truncated   bool   // body hit the 5MB cap
+}
+
 // Page fetches a page, decodes it to UTF-8, and caps it at 5MB.
-// finalURL is the URL after redirects (base for relative resolution).
-func (c *Client) Page(rawURL string) (body, finalURL string, truncated bool, err error) {
+func (c *Client) Page(rawURL string) (*Response, error) {
 	resp, err := c.get(context.Background(), c.hc, rawURL)
 	if err != nil {
-		return "", "", false, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	utf8Reader, err := charset.NewReader(resp.Body, resp.Header.Get("Content-Type"))
+	header := resp.Header.Get("Content-Type")
+	utf8Reader, err := charset.NewReader(resp.Body, header)
 	if err != nil {
-		return "", "", false, err
+		return nil, err
 	}
 	data, err := io.ReadAll(io.LimitReader(utf8Reader, maxPageBytes+1))
 	if err != nil {
-		return "", "", false, err
+		return nil, err
 	}
+	out := &Response{URL: resp.Request.URL.String()}
 	if len(data) > maxPageBytes {
 		data = data[:maxPageBytes]
-		truncated = true
+		out.Truncated = true
 	}
-	return string(data), resp.Request.URL.String(), truncated, nil
+	out.Body = string(data)
+	if mt, _, err := mime.ParseMediaType(header); err == nil {
+		out.ContentType = strings.ToLower(mt)
+	}
+	return out, nil
 }
 
 // Image fetches and decodes an image (png/jpeg/gif/webp), capped at 2MB.

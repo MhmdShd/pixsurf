@@ -7,6 +7,7 @@ toolchain go1.25.12
 require (
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/mattn/go-runewidth v0.0.27
+	github.com/yuin/goldmark v1.8.5
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
 )

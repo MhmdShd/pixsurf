@@ -13,6 +13,7 @@ import (
 	"github.com/MhmdShd/pixsurf/dom"
 	"github.com/MhmdShd/pixsurf/fetch"
 	"github.com/MhmdShd/pixsurf/layout"
+	"github.com/MhmdShd/pixsurf/markup"
 	"github.com/MhmdShd/pixsurf/ui"
 )
 
@@ -128,12 +129,13 @@ func (a *app) load(rawURL string) bool {
 		target = "https://" + strings.TrimSpace(target)
 	}
 
-	body, finalURL, truncated, err := a.client.Page(target)
+	resp, err := a.client.Page(target)
 	if err != nil {
 		a.lastErr = err.Error()
 		return false
 	}
-	d, err := dom.Parse(body, finalURL)
+	html := markup.ToHTML(resp.Body, resp.ContentType, resp.URL)
+	d, err := dom.Parse(html, resp.URL)
 	if err != nil {
 		a.lastErr = err.Error()
 		return false
@@ -143,8 +145,8 @@ func (a *app) load(rawURL string) bool {
 	a.resetImages()
 	a.doc = layout.Render(d, a.cols, a.fetcher(), a.values)
 	a.spawnFetches()
-	a.url = finalURL
-	if truncated {
+	a.url = resp.URL
+	if resp.Truncated {
 		a.lastErr = "page truncated at 5MB"
 	}
 	return true
