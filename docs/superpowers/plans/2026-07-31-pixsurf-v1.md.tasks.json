@@ -4,41 +4,41 @@
     {
       "id": 1,
       "subject": "Task 1: Repository scaffold",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Compilable empty Go module with license, .gitignore, CI.\n\n```json:metadata\n{\"files\": [\"go.mod\", \".gitignore\", \"LICENSE\", \".github/workflows/ci.yml\", \"README.md\"], \"verifyCommand\": \"go build ./...\", \"acceptanceCriteria\": [\"go build succeeds\", \"CI workflow present\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: render package (TDD)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Screenshot to half-block cell grid; cell to page coordinate mapping.\n\n```json:metadata\n{\"files\": [\"render/render.go\", \"render/render_test.go\"], \"verifyCommand\": \"go test ./render/ -v\", \"acceptanceCriteria\": [\"4 tests pass\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: browser package (chromedp)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Headless Chrome wrapper: open, screenshot, scroll, click, history, NormalizeURL.\n\n```json:metadata\n{\"files\": [\"browser/browser.go\", \"browser/browser_test.go\"], \"verifyCommand\": \"go test ./browser/ -v && go build ./...\", \"acceptanceCriteria\": [\"NormalizeURL pass\", \"build ok\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: ui package (tcell)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Terminal frontend: events out, Draw in, URL bar.\n\n```json:metadata\n{\"files\": [\"ui/ui.go\"], \"verifyCommand\": \"go build ./... && go vet ./...\", \"acceptanceCriteria\": [\"build ok\", \"vet clean\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: main.go glue",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 3, 4],
       "description": "**Goal:** Event loop wiring browser+render+ui, 50ms scroll debounce.\n\n```json:metadata\n{\"files\": [\"main.go\"], \"verifyCommand\": \"go build -o pixsurf . && go vet ./... && go test ./...\", \"acceptanceCriteria\": [\"build ok\", \"all tests pass\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: Smoke test, README, push",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5],
       "description": "**Goal:** Verify against example.com, final README, push main to GitHub.\n\n```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"go run ./smoke\", \"acceptanceCriteria\": [\"smoke OK\", \"pushed to origin main\"]}\n```"
     }
